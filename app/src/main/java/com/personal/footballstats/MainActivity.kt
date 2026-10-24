@@ -122,7 +122,7 @@ class MainViewModel : ViewModel() {
         _error.value = null
         viewModelScope.launch {
             try {
-                val today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
+                val today = "2024-05-20
                 val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).build()
                 val json = Json { ignoreUnknownKeys = true }
                 val retrofit = Retrofit.Builder()
@@ -136,7 +136,7 @@ class MainViewModel : ViewModel() {
                 val allMatches = mutableListOf<MatchUi>()
 
                 for (league in leagues) {
-                    val fixtures = api.getFixtures(today, league, LocalDate.now().year, _apiKey.value).response
+                    val fixtures = api.getFixtures(today, league, 2023, _apiKey.value).response
                     for (fix in fixtures.take(3)) {
                         try {
                             val predRes = api.getPrediction(fix.id, _apiKey.value).response.firstOrNull()

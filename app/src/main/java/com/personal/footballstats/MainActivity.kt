@@ -132,7 +132,7 @@ class MainViewModel : ViewModel() {
                     .build()
                 val api = retrofit.create(ApiService::class.java)
 
-                val leagues = listOf(39, 140, 135, 78, 61) 
+                val leagues = listOf(39, 140, 135, 78, 61, 2, 3, 128, 71, 253)
                 val allMatches = mutableListOf<MatchUi>()
 
                 for (league in leagues) {

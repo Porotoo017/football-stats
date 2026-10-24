@@ -136,7 +136,7 @@ class MainViewModel : ViewModel() {
                 val allMatches = mutableListOf<MatchUi>()
 
                 for (league in leagues) {
-                    val fixtures = api.getFixtures(today, league, 2025, _apiKey.value).response
+                    val fixtures = api.getFixtures(today, league, LocalDate.now().year, _apiKey.value).response
                     for (fix in fixtures.take(3)) {
                         try {
                             val predRes = api.getPrediction(fix.id, _apiKey.value).response.firstOrNull()

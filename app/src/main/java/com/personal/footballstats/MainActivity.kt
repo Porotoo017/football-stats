@@ -106,7 +106,7 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 // Obtenemos la fecha de hoy en formato YYYY-MM-DD
-                val today = LocalDate.now().toString()
+                val today = "2024-05-19"
                 
                 val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).build()
                 val json = Json { ignoreUnknownKeys = true }

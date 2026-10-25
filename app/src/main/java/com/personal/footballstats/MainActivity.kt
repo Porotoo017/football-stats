@@ -55,7 +55,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-data class LeagueItem(val id: String, val name: String, val flag: String, val slug: String)
+data class LeagueItem(val id: String, val name: String, val badge: String, val slug: String)
 
 data class Team(
     val id: String,
@@ -107,17 +107,17 @@ data class Prediction(
 )
 
 val LEAGUES = listOf(
-    LeagueItem("arg.1", "Liga Profesional", "🇦🇷", "arg.1"),
-    LeagueItem("arg.copa_liga", "Copa de la Liga", "🇦🇷", "arg.copa_liga"),
-    LeagueItem("arg.copa_arg", "Copa Argentina", "🇦🇷", "arg.copa_arg"),
-    LeagueItem("esp.1", "La Liga", "🇪🇸", "esp.1"),
-    LeagueItem("eng.1", "Premier League", "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "eng.1"),
-    LeagueItem("uefa.champions", "Champions League", "🏆", "uefa.champions"),
-    LeagueItem("ita.1", "Serie A", "🇮🇹", "ita.1"),
-    LeagueItem("ger.1", "Bundesliga", "🇩🇪", "ger.1"),
-    LeagueItem("fra.1", "Ligue 1", "🇫🇷", "fra.1"),
-    LeagueItem("bra.1", "Brasileirão", "🇧🇷", "bra.1"),
-    LeagueItem("conmebol.libertadores", "Copa Libertadores", "🌎", "conmebol.libertadores")
+    LeagueItem("arg.1", "Liga Profesional", "ARG", "arg.1"),
+    LeagueItem("arg.copa_liga", "Copa de la Liga", "ARG", "arg.copa_liga"),
+    LeagueItem("arg.copa_arg", "Copa Argentina", "ARG", "arg.copa_arg"),
+    LeagueItem("esp.1", "La Liga", "ESP", "esp.1"),
+    LeagueItem("eng.1", "Premier League", "ENG", "eng.1"),
+    LeagueItem("uefa.champions", "Champions League", "EUR", "uefa.champions"),
+    LeagueItem("ita.1", "Serie A", "ITA", "ita.1"),
+    LeagueItem("ger.1", "Bundesliga", "GER", "ger.1"),
+    LeagueItem("fra.1", "Ligue 1", "FRA", "fra.1"),
+    LeagueItem("bra.1", "Brasileirao", "BRA", "bra.1"),
+    LeagueItem("conmebol.libertadores", "Libertadores", "CON", "conmebol.libertadores")
 )
 
 fun formatArgentinaTime(isoUtc: String): String {
@@ -127,7 +127,7 @@ fun formatArgentinaTime(isoUtc: String): String {
             timeZone = TimeZone.getTimeZone("UTC")
         }
         val date: Date = inFormat.parse(clean.substring(0, 16)) ?: return "Hora a confirmar"
-        val outFormat = SimpleDateFormat("EEE d MMM • HH:mm 'hs'", Locale("es", "AR")).apply {
+        val outFormat = SimpleDateFormat("EEE d MMM - HH:mm 'hs'", Locale("es", "AR")).apply {
             timeZone = TimeZone.getTimeZone("America/Argentina/Buenos_Aires")
         }
         val res = outFormat.format(date)
@@ -170,7 +170,7 @@ fun calculatePrediction(m: Match): Prediction {
     val dcVal = if (homeIsFavorite) 1.0 / ((1.0 / hOdds) + (1.0 / dOdds)) * 1.08 else 1.0 / ((1.0 / aOdds) + (1.0 / dOdds)) * 1.08
     val dcQuote = String.format(Locale.US, "%.2f", dcVal.coerceAtLeast(1.15))
 
-    val odds1X2 = "1: " + String.format(Locale.US, "%.2f", hOdds) + "  |  X: " + String.format(Locale.US, "%.2f", dOdds) + "  |  2: " + String.format(Locale.US, "%.2f", aOdds)
+    val odds1X2 = "1: " + String.format(Locale.US, "%.2f", hOdds) + " | X: " + String.format(Locale.US, "%.2f", dOdds) + " | 2: " + String.format(Locale.US, "%.2f", aOdds)
 
     val goalsPick = if (m.odds.hasReal && m.odds.overQuote > 0) {
         "+2.5 Goles (" + String.format(Locale.US, "%.2f", m.odds.overQuote) + ") / -2.5 (" + String.format(Locale.US, "%.2f", m.odds.underQuote) + ")"
@@ -178,36 +178,36 @@ fun calculatePrediction(m: Match): Prediction {
         "+2.5 Goles (1.95) / -2.5 Goles (1.80)"
     }
 
-    val shotsPick = "Más de 7.5 remates directos (1.78)"
-    val cardsPick = "Más de 4.5 tarjetas totales (1.85)"
-    val cornersPick = "Más de 8.5 córners en el partido (1.80)"
+    val shotsPick = "Mas de 7.5 remates directos (1.78)"
+    val cardsPick = "Mas de 4.5 tarjetas totales (1.85)"
+    val cornersPick = "Mas de 8.5 corners en el partido (1.80)"
 
     // JUGADOR CON MAS DISPAROS AL ARCO (Planteles actualizados 100% reales)
     val starDB = mapOf(
         "boca" to Pair("Miguel Merentiel", "Boca Juniors"),
         "river" to Pair("Facundo Colidio", "River Plate"),
-        "racing" to Pair("Adrián Martínez", "Racing Club"),
-        "independiente" to Pair("Gabriel Ávalos", "Independiente"),
+        "racing" to Pair("Adrian Martinez", "Racing Club"),
+        "independiente" to Pair("Gabriel Avalos", "Independiente"),
         "san lorenzo" to Pair("Iker Muniain", "San Lorenzo"),
-        "velez" to Pair("Braian Romero", "Vélez Sarsfield"),
-        "talleres" to Pair("Federico Girotti", "Talleres de Córdoba"),
+        "velez" to Pair("Braian Romero", "Velez Sarsfield"),
+        "talleres" to Pair("Federico Girotti", "Talleres de Cordoba"),
         "estudiantes" to Pair("Guido Carrillo", "Estudiantes LP"),
-        "belgrano" to Pair("Lucas Zelarayán", "Belgrano"),
+        "belgrano" to Pair("Lucas Zelarayan", "Belgrano"),
         "rosario central" to Pair("Marco Ruben", "Rosario Central"),
-        "newell" to Pair("Juan Ignacio Ramírez", "Newell's Old Boys"),
-        "real madrid" to Pair("Kylian Mbappé", "Real Madrid"),
+        "newell" to Pair("Juan Ignacio Ramirez", "Newell's Old Boys"),
+        "real madrid" to Pair("Kylian Mbappe", "Real Madrid"),
         "barcelona" to Pair("Robert Lewandowski", "FC Barcelona"),
-        "atletico" to Pair("Julián Álvarez", "Atlético de Madrid"),
+        "atletico" to Pair("Julian Alvarez", "Atletico de Madrid"),
         "manchester city" to Pair("Erling Haaland", "Manchester City"),
         "liverpool" to Pair("Mohamed Salah", "Liverpool"),
         "arsenal" to Pair("Bukayo Saka", "Arsenal"),
         "chelsea" to Pair("Cole Palmer", "Chelsea"),
-        "inter" to Pair("Lautaro Martínez", "Inter de Milán"),
-        "juventus" to Pair("Dušan Vlahović", "Juventus"),
-        "bayern" to Pair("Harry Kane", "Bayern Múnich"),
-        "psg" to Pair("Ousmane Dembélé", "Paris Saint-Germain"),
+        "inter" to Pair("Lautaro Martinez", "Inter de Milan"),
+        "juventus" to Pair("Dusan Vlahovic", "Juventus"),
+        "bayern" to Pair("Harry Kane", "Bayern Munich"),
+        "psg" to Pair("Ousmane Dembele", "Paris Saint-Germain"),
         "flamengo" to Pair("Pedro", "Flamengo"),
-        "palmeiras" to Pair("Estêvão", "Palmeiras")
+        "palmeiras" to Pair("Estevao", "Palmeiras")
     )
 
     var sName = ""
@@ -220,7 +220,7 @@ fun calculatePrediction(m: Match): Prediction {
     if (favObj.leaderName.isNotBlank()) {
         sName = favObj.leaderName
         sClub = favObj.name
-        sDetail = "Goleador/Líder (" + favObj.leaderStat + ") • Pronóstico: Más de 1.5 disparos al arco (1.85)"
+        sDetail = "Goleador/Lider (" + favObj.leaderStat + ") - Pronostico: Mas de 1.5 disparos al arco (1.85)"
     } else {
         val fKey = starDB.keys.firstOrNull { favObj.name.lowercase(Locale.ROOT).contains(it) }
         val dKey = if (fKey == null) starDB.keys.firstOrNull { dogObj.name.lowercase(Locale.ROOT).contains(it) } else null
@@ -229,20 +229,20 @@ fun calculatePrediction(m: Match): Prediction {
             val p = starDB[fKey]!!
             sName = p.first
             sClub = p.second
-            sDetail = "Principal rematador del club • Pronóstico: Más de 1.5 disparos al arco (1.75)"
+            sDetail = "Principal rematador del club - Pronostico: Mas de 1.5 disparos al arco (1.75)"
         } else if (dKey != null) {
             val p = starDB[dKey]!!
             sName = p.first
             sClub = p.second
-            sDetail = "Principal rematador del club • Pronóstico: Más de 1.5 disparos al arco (1.75)"
+            sDetail = "Principal rematador del club - Pronostico: Mas de 1.5 disparos al arco (1.75)"
         } else {
-            sName = favObj.shortName + " N° 9 / Delantero titular"
+            sName = favObj.shortName + " Nro 9 / Delantero titular"
             sClub = favObj.name
-            sDetail = "Centrodelantero titular • Pronóstico: Más de 1.5 disparos al arco (1.80)"
+            sDetail = "Centrodelantero titular - Pronostico: Mas de 1.5 disparos al arco (1.80)"
         }
     }
 
-    val parlayText = doubleChance + "  +  Más de 1.5 goles"
+    val parlayText = doubleChance + " + Mas de 1.5 goles"
     val pOddsVal = (dcVal.coerceAtLeast(1.15) * 1.38)
     val parlayOdds = String.format(Locale.US, "%.2f", pOddsVal)
 
@@ -400,10 +400,8 @@ fun FootballStatsApp() {
         ) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("⚽", fontSize = 22.sp)
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        "FÚTBOL STATS PRO",
+                        "FUTBOL STATS PRO",
                         color = Color.White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.ExtraBold,
@@ -420,7 +418,7 @@ fun FootballStatsApp() {
                         Text("Actualizar", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                Text("Pronósticos reales, cuotas oficiales y remates al arco", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                Text("Pronosticos reales, cuotas oficiales y remates al arco", color = Color(0xFF94A3B8), fontSize = 11.sp)
             }
         }
 
@@ -441,14 +439,25 @@ fun FootballStatsApp() {
                         .background(if (sel) Color(0xFF2563EB) else Color(0xFF1E293B))
                         .border(1.dp, if (sel) Color(0xFF60A5FA) else Color.Transparent, RoundedCornerShape(20.dp))
                         .clickable { loadData(item) }
-                        .padding(horizontal = 14.dp, vertical = 7.dp)
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
                 ) {
-                    Text(
-                        text = item.flag + "  " + item.name,
-                        color = if (sel) Color.White else Color(0xFF94A3B8),
-                        fontSize = 12.sp,
-                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (sel) Color.White.copy(alpha = 0.2f) else Color(0xFF334155))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                        ) {
+                            Text(item.badge, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = item.name,
+                            color = if (sel) Color.White else Color(0xFF94A3B8),
+                            fontSize = 12.sp,
+                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
                 }
             }
         }
@@ -460,204 +469,4 @@ fun FootballStatsApp() {
                     CircularProgressIndicator(color = Color(0xFF38BDF8))
                     Spacer(modifier = Modifier.height(12.dp))
                     Text("Cargando partidos y cuotas reales...", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                }
-            }
-        } else if (matches.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No hay partidos programados en esta liga.", color = Color(0xFF64748B), fontSize = 14.sp)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(matches) { m ->
-                    MatchCard(
-                        m = m,
-                        abierto = expandedId == m.id,
-                        onToggle = { expandedId = if (expandedId == m.id) null else m.id }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun MatchCard(m: Match, abierto: Boolean, onToggle: () -> Unit) {
-    val p = remember(m) { calculatePrediction(m) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF111827))
-            .border(
-                1.dp,
-                if (m.live) Color(0xFFEF4444) else if (abierto) Color(0xFF38BDF8) else Color(0xFF1F2937),
-                RoundedCornerShape(14.dp)
-            )
-            .clickable { onToggle() }
-            .padding(14.dp)
-    ) {
-        Column {
-            // ENCABEZADO: TIEMPO ARGENTINO Y ESTADO
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(m.timeArg, color = Color(0xFF94A3B8), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(modifier = Modifier.weight(1f))
-                if (m.live) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFFDC2626))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text("EN VIVO • " + m.statusText, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    Text(m.statusText, color = if (m.finished) Color(0xFF64748B) else Color(0xFF38BDF8), fontSize = 11.sp)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // MARCADOR Y EQUIPOS
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = m.home.name,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 10.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF090D16))
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = if (m.live || m.finished) m.home.score + " - " + m.away.score else "VS",
-                        color = if (m.live) Color(0xFF22C55E) else Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
-                Text(
-                    text = m.away.name,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                    textAlign = TextAlign.End,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // PRONÓSTICO FAVORITO PRINCIPAL
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF1E293B))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Favorito: ", color = Color(0xFF94A3B8), fontSize = 11.sp)
-                    Text(p.favPick, color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text(if (abierto) "▲ Menos" else "▼ Ver análisis", color = Color(0xFF64748B), fontSize = 10.sp)
-                }
-            }
-
-            // SECCIÓN DESPLEGABLE CON DETALLES COMPLETOS
-            if (abierto) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF1F2937)))
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("ESTADÍSTICAS Y CUOTAS REALES", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
-                    Spacer(modifier = Modifier.weight(1f))
-                    if (m.odds.hasReal) {
-                        Text("DraftKings Oficial", color = Color(0xFF10B981), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-                InfoRow("Cuotas 1X2", p.odds1X2, Color.White)
-                InfoRow("Doble Oportunidad", p.doubleC + " (Cuota " + p.dcQuote + ")", Color(0xFF60A5FA))
-                InfoRow("Goles (+/- 2.5)", p.goals, Color(0xFFF472B6))
-                InfoRow("Tiros al Arco", p.shots, Color(0xFFA78BFA))
-                InfoRow("Tarjetas", p.cards, Color(0xFFFBBF24))
-                InfoRow("Tiros de Esquina", p.corners, Color(0xFF2DD4BF))
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // JUGADOR CON MÁS DISPAROS AL ARCO
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF042F2E))
-                        .border(1.dp, Color(0xFF14B8A6), RoundedCornerShape(8.dp))
-                        .padding(10.dp)
-                ) {
-                    Column {
-                        Text("JUGADOR CON MÁS DISPAROS AL ARCO:", color = Color(0xFF2DD4BF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Text(p.starName + "  •  Club: " + p.starClub, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(p.starDetail, color = Color(0xFF99F6E4), fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // COMBINADA / PARLAY
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF1E1B4B))
-                        .border(1.dp, Color(0xFF6366F1), RoundedCornerShape(8.dp))
-                        .padding(10.dp)
-                ) {
-                    Column {
-                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("COMBINADA / PARLAY REAL", color = Color(0xFFA5B4FC), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.weight(1f))
-                            Text("Cuota " + p.parlayOdds, color = Color(0xFF34D399), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(p.parlayText, color = Color.White, fontSize = 11.sp)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun InfoRow(label: String, value: String, col: Color) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF090D16))
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label, color = Color(0xFF94A3B8), fontSize = 11.sp)
-        Spacer(modifier = Modifier.weight(1f))
-        Text(value, color = col, fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End)
-    }
-}
+         

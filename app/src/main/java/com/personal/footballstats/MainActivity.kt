@@ -131,8 +131,8 @@ fun formatArgentinaTime(isoUtc: String): String {
             timeZone = TimeZone.getTimeZone("America/Argentina/Buenos_Aires")
         }
         val res = outFormat.format(date)
-        res.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("es", "AR")) else it.toString() }
-    } catch (_: Exception) {
+        res.replaceFirstChar { if (it.isLowerCase()) it.uppercase() else it.toString() }
+    } catch (e: Exception) {
         "Horario a confirmar"
     }
 }
@@ -353,7 +353,7 @@ suspend fun fetchMatches(leagueSlug: String): List<Match> = withContext(Dispatch
                 result.add(Match(id, homeTeam, awayTeam, statusText, isLive, isFinished, timeArg, leagueName, realOdds))
             }
         }
-    } catch (_: Exception) {}
+    } catch (e: Exception) {}
     result
 }
 
@@ -469,4 +469,5 @@ fun FootballStatsApp() {
                     CircularProgressIndicator(color = Color(0xFF38BDF8))
                     Spacer(modifier = Modifier.height(12.dp))
                     Text("Cargando partidos y cuotas reales...", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                }
          

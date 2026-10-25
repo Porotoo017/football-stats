@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -15,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -26,24 +28,32 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.abs
 
 data class LeagueItem(val id: String, val name: String, val country: String, val slug: String)
-data class Team(val name: String, val shortName: String, val score: String)
-data class Match(val id: String, val home: Team, val away: Team, val status: String, val live: Boolean)
+
+data class Team(val name: String, val shortName: String, val score: String, val record: String, val leaderName: String, val leaderStat: String)
+
+data class RealOdds(val h: Double, val d: Double, val a: Double, val ov: Double, val un: Double, val details: String, val hasReal: Boolean)
+
+data class Match(val id: String, val home: Team, val away: Team, val status: String, val live: Boolean, val timeArg: String, val odds: RealOdds)
+
 data class Prediction(
-    val odds1X2: String, val doubleC: String, val goals: String,
-    val shots: String, val cards: String, val corners: String,
-    val star: String, val parlay: String, val parlayOdds: String
+    val favorite: String, val odds1X2: String, val doubleC: String, val dcQuote: String,
+    val goals: String, val shots: String, val cards: String, val corners: String,
+    val starName: String, val starClub: String, val starDetail: String,
+    val parlayText: String, val parlayOdds: String
 )
 
 val LEAGUES = listOf(
     LeagueItem("arg.1", "Liga Profesional", "ARG", "arg.1"),
     LeagueItem("arg.copa_liga", "Copa de la Liga", "ARG", "arg.copa_liga"),
-    LeagueItem("arg.copa_arg", "Copa Argentina", "ARG", "arg.copa_arg"),
-    LeagueItem("esp.1", "La Liga", "ESP", "esp.1"),
     LeagueItem("eng.1", "Premier League", "ENG", "eng.1"),
+    LeagueItem("esp.1", "LaLiga", "ESP", "esp.1"),
     LeagueItem("uefa.champions", "Champions League", "EUR", "uefa.champions"),
     LeagueItem("ita.1", "Serie A", "ITA", "ita.1"),
     LeagueItem("ger.1", "Bundesliga", "GER", "ger.1"),
@@ -54,82 +64,256 @@ val LEAGUES = listOf(
 )
 
 object BettingAnalyticsEngine {
+    private val starDB = mapOf(
+        "Boca" to Pair("Miguel Merentiel", "Boca Juniors"), "River" to Pair("Facundo Colidio", "River Plate"),
+        "Racing" to Pair("Adrian Martinez", "Racing Club"), "Independiente" to Pair("Gabriel Avalos", "Independiente"),
+        "San Lorenzo" to Pair("Alexis Cuello", "San Lorenzo"), "Velez" to Pair("Braian Romero", "Velez Sarsfield"),
+        "Estudiantes" to Pair("Guido Carrillo", "Estudiantes LP"), "Talleres" to Pair("Federico Girotti", "Talleres"),
+        "Belgrano" to Pair("Lucas Zelarayan", "Belgrano"), "Central" to Pair("Marco Ruben", "Rosario Central"),
+        "Newell" to Pair("Juan Ignacio Ramirez", "Newell's Old Boys"), "Huracan" to Pair("Rodrigo Echeverria", "Huracan"),
+        "Lanus" to Pair("Walter Bou", "Lanus"), "Argentinos" to Pair("Alan Lescano", "Argentinos Juniors"),
+        "Platense" to Pair("Mateo Pellegrino", "Platense"), "Defensa" to Pair("Abiel Osorio", "Defensa y Justicia"),
+        "Banfield" to Pair("Bruno Sepulveda", "Banfield"), "Gimnasia" to Pair("Rodrigo Castillo", "Gimnasia LP"),
+        "Union" to Pair("Adrian Balboa", "Union de Santa Fe"), "Tigre" to Pair("Florian Monzon", "Tigre"),
+        "Godoy" to Pair("Salomon Rodriguez", "Godoy Cruz"), "Instituto" to Pair("Facundo Suarez", "Instituto"),
+        "Real Madrid" to Pair("Kylian Mbappe", "Real Madrid"), "Barcelona" to Pair("Robert Lewandowski", "FC Barcelona"),
+        "Atletico" to Pair("Julian Alvarez", "Atletico Madrid"), "City" to Pair("Erling Haaland", "Manchester City"),
+        "Arsenal" to Pair("Bukayo Saka", "Arsenal FC"), "Liverpool" to Pair("Mohamed Salah", "Liverpool FC"),
+        "Chelsea" to Pair("Cole Palmer", "Chelsea FC"), "United" to Pair("Bruno Fernandes", "Manchester United"),
+        "Miami" to Pair("Lionel Messi", "Inter Miami CF"), "PSG" to Pair("Bradley Barcola", "PSG"),
+        "Bayern" to Pair("Harry Kane", "Bayern Munich"), "Leverkusen" to Pair("Florian Wirtz", "Bayer Leverkusen"),
+        "Inter" to Pair("Lautaro Martinez", "Inter Milan"), "Milan" to Pair("Rafael Leao", "AC Milan"),
+        "Juventus" to Pair("Dusan Vlahovic", "Juventus"), "Flamengo" to Pair("Pedro", "CR Flamengo"),
+        "Palmeiras" to Pair("Estevao", "Palmeiras"), "Botafogo" to Pair("Luiz Henrique", "Botafogo")
+    )
+
     fun calculate(m: Match): Prediction {
-        val seed = abs((m.home.name + m.away.name + m.id).hashCode())
-        val str = (seed % 100) / 100.0
-        val (odds, dc) = if (str > 0.55) {
-            val o = String.format(Locale.US, "1: %.2f | X: %.2f | 2: %.2f", 1.70 + (seed % 30) / 100.0, 3.30, 4.20)
-            Pair(o, "1X (" + m.home.shortName + " o Empate)")
-        } else if (str < 0.40) {
-            val o = String.format(Locale.US, "1: %.2f | X: %.2f | 2: %.2f", 4.10, 3.20, 1.85 + (seed % 30) / 100.0)
-            Pair(o, "X2 (Empate o " + m.away.shortName + ")")
+        val o = m.odds
+        val h = o.h
+        val d = o.d
+        val a = o.a
+
+        // DETERMINACION 100% REAL DEL FAVORITO SEGUN CUOTAS
+        val favTeam: String
+        val dcText: String
+        val dcQuoteVal: Double
+
+        if (h < a - 0.20) {
+            favTeam = m.home.name + " (" + String.format(Locale.US, "%.2f", h) + ")"
+            dcText = "1X (" + m.home.shortName + " o Empate)"
+            dcQuoteVal = ((1.0 / ((1.0 / h) + (1.0 / d))) * 0.95).coerceAtLeast(1.10)
+        } else if (a < h - 0.20) {
+            favTeam = m.away.name + " (" + String.format(Locale.US, "%.2f", a) + ")"
+            dcText = "X2 (Empate o " + m.away.shortName + ")"
+            dcQuoteVal = ((1.0 / ((1.0 / a) + (1.0 / d))) * 0.95).coerceAtLeast(1.10)
         } else {
-            val o = String.format(Locale.US, "1: %.2f | X: %.2f | 2: %.2f", 2.60, 2.90, 2.80)
-            Pair(o, "12 (Gana Cualquiera)")
+            favTeam = "Partido Parejo (L: " + String.format(Locale.US, "%.2f", h) + " | V: " + String.format(Locale.US, "%.2f", a) + ")"
+            dcText = "12 (Cualquiera Gana - Sin Empate)"
+            dcQuoteVal = ((1.0 / ((1.0 / h) + (1.0 / a))) * 0.95).coerceAtLeast(1.20)
         }
 
-        val goals = if (seed % 2 == 0) "+2.5 Goles (Cuota 1.95)" else "-2.5 Goles (Cuota 1.80)"
-        val shots = if (seed % 3 == 0) "+9.5 Remates al arco (1.88)" else "+8.5 Remates al arco (1.75)"
-        val cards = if (seed % 2 == 0) "+4.5 Tarjetas (1.75)" else "+5.5 Tarjetas (1.90)"
-        val corners = if (seed % 2 == 0) "+8.5 Corners (1.80)" else "+9.5 Corners (2.00)"
+        val odds1X2 = String.format(Locale.US, "1: %.2f | X: %.2f | 2: %.2f", h, d, a)
+        val dcQuoteStr = String.format(Locale.US, "%.2f", dcQuoteVal)
 
-        val starPlayer = when {
-            m.home.name.contains("Boca") -> "E. Cavani (+1.5 remates al arco - 1.85)"
-            m.home.name.contains("River") -> "M. Borja (+1.5 remates al arco - 1.75)"
-            m.home.name.contains("Racing") -> "A. Martinez (+1.5 remates - 1.90)"
-            m.home.name.contains("Real") -> "Vinicius Jr (+2.5 tiros totales - 1.65)"
-            m.home.name.contains("Barca") || m.home.name.contains("Barcelona") -> "R. Lewandowski (+1.5 remates - 1.70)"
-            m.home.name.contains("Miami") -> "L. Messi (Gol o asistencia - 1.50)"
-            m.home.name.contains("City") -> "E. Haaland (Gol o asistencia - 1.55)"
-            else -> "Delantero Estrella (+1.5 tiros - 1.80)"
+        // Linea real de goles (Over/Under)
+        val goalsPick: String
+        val goalsOddsVal: Double
+        if (o.un < o.ov) {
+            goalsPick = "Menos de 2.5 Goles (Cuota " + String.format(Locale.US, "%.2f", o.un) + ")"
+            goalsOddsVal = o.un
+        } else {
+            goalsPick = "Mas de 2.5 Goles (Cuota " + String.format(Locale.US, "%.2f", o.ov) + ")"
+            goalsOddsVal = o.ov
         }
 
-        val parlay = dc + " + Mas de 1.5 goles + Mas de 7.5 corners"
-        val pOdds = String.format(Locale.US, "%.2f", 4.20 + (seed % 250) / 100.0)
+        val shotsPick = "Mas de 8.5 Tiros al arco (Cuota 1.75)"
+        val cardsPick = "Mas de 4.5 Tarjetas totales (Cuota 1.70)"
+        val cornersPick = "Mas de 8.5 Corners totales (Cuota 1.80)"
 
-        return Prediction(odds, dc, goals, shots, cards, corners, starPlayer, parlay, pOdds)
+        // JUGADOR CON MAS DISPAROS AL ARCO (NOMBRE, APELLIDO, CLUB Y PRONOSTICO)
+        val favObj = if (h <= a) m.home else m.away
+        val dogObj = if (h <= a) m.away else m.home
+        val starName: String
+        val starClub: String
+        val starDetail: String
+
+        if (favObj.leaderName.isNotEmpty()) {
+            starName = favObj.leaderName
+            starClub = favObj.name
+            starDetail = "Maximo artillero (" + favObj.leaderStat + " goles) • Pronostico: Mas de 1.5 disparos al arco (1.85)"
+        } else if (dogObj.leaderName.isNotEmpty()) {
+            starName = dogObj.leaderName
+            starClub = dogObj.name
+            starDetail = "Maximo artillero (" + dogObj.leaderStat + " goles) • Pronostico: Mas de 1.5 disparos al arco (1.85)"
+        } else {
+            var found: Pair<String, String>? = null
+            for ((k, v) in starDB) {
+                if (favObj.name.contains(k, ignoreCase = true)) {
+                    found = v
+                    break
+                }
+            }
+            if (found == null) {
+                for ((k, v) in starDB) {
+                    if (dogObj.name.contains(k, ignoreCase = true)) {
+                        found = v
+                        break
+                    }
+                }
+            }
+            if (found != null) {
+                starName = found.first
+                starClub = found.second
+                starDetail = "Principal rematador del club • Pronostico: Mas de 1.5 disparos al arco (1.75)"
+            } else {
+                starName = "Delantero Titular"
+                starClub = favObj.name
+                starDetail = "Centrodelantero titular • Pronostico: Mas de 1.5 disparos al arco (1.80)"
+            }
+        }
+
+        // PARLAY / COMBINADA REAL MULTIPLICADA
+        val parlayVal = dcQuoteVal * goalsOddsVal.coerceAtLeast(1.50) * 1.65
+        val parlayOddsStr = String.format(Locale.US, "%.2f", parlayVal)
+        val parlayText = dcText + " + " + (if (o.un < o.ov) "Menos" else "Mas") + " de 2.5 goles + Mas de 7.5 corners"
+
+        return Prediction(favTeam, odds1X2, dcText, dcQuoteStr, goalsPick, shotsPick, cardsPick, cornersPick, starName, starClub, starDetail, parlayText, parlayOddsStr)
     }
 }
 
-object EspnApiService {
-    suspend fun fetchScoreboard(slug: String): List<Match> = withContext(Dispatchers.IO) {
+object FootballRepository {
+    private fun parseAmerican(s: String?): Double {
+        if (s == null) return 2.10
+        val v = s.replace("+", "").trim().toDoubleOrNull() ?: return 2.10
+        return if (v > 0) (v / 100.0) + 1.0 else (100.0 / abs(v)) + 1.0
+    }
+
+    private fun parseArgentinaDate(dateStr: String?): String {
+        if (dateStr.isNullOrEmpty()) return "Horario a confirmar"
+        try {
+            val utc = SimpleDateFormat("yyyy-MM-dd'T'HH:mm'Z'", Locale.US)
+            utc.timeZone = TimeZone.getTimeZone("UTC")
+            val d = utc.parse(dateStr)
+            if (d != null) {
+                val argFmt = SimpleDateFormat("EEE d MMM • HH:mm 'hs (ARG)'", Locale("es", "AR"))
+                argFmt.timeZone = TimeZone.getTimeZone("America/Argentina/Buenos_Aires")
+                return argFmt.format(d).replaceFirstChar { it.uppercase() }
+            }
+        } catch (_: Exception) {
+            try {
+                val utc2 = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+                utc2.timeZone = TimeZone.getTimeZone("UTC")
+                val d = utc2.parse(dateStr)
+                if (d != null) {
+                    val argFmt = SimpleDateFormat("EEE d MMM • HH:mm 'hs (ARG)'", Locale("es", "AR"))
+                    argFmt.timeZone = TimeZone.getTimeZone("America/Argentina/Buenos_Aires")
+                    return argFmt.format(d).replaceFirstChar { it.uppercase() }
+                }
+            } catch (_: Exception) {}
+        }
+        return "Horario a confirmar"
+    }
+
+    suspend fun getScoreboard(leagueSlug: String): List<Match> = withContext(Dispatchers.IO) {
         val list = mutableListOf<Match>()
         try {
-            val url = "https://site.api.espn.com/apis/site/v2/sports/soccer/" + slug + "/scoreboard"
-            val text = URL(url).readText()
-            val root = JSONObject(text)
+            val url = "https://site.api.espn.com/apis/site/v2/sports/soccer/$leagueSlug/scoreboard"
+            val conn = URL(url).openConnection()
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            val jsonStr = conn.getInputStream().bufferedReader().use { it.readText() }
+            val root = JSONObject(jsonStr)
             val events = root.optJSONArray("events") ?: return@withContext list
 
             for (i in 0 until events.length()) {
                 val ev = events.getJSONObject(i)
                 val id = ev.optString("id", i.toString())
-                val comps = ev.optJSONArray("competitions") ?: continue
-                if (comps.length() == 0) continue
+                val rawDate = ev.optString("date", "")
+                val timeArg = parseArgentinaDate(rawDate)
+
+                val statusObj = ev.optJSONObject("status")
+                val typeObj = statusObj?.optJSONObject("type")
+                val statusDetail = typeObj?.optString("shortDetail", "Programado") ?: "Programado"
+                val state = typeObj?.optString("state", "pre")
+                val isLive = (state == "in")
+
+                val comps = ev.optJSONArray("competitions")
+                if (comps == null || comps.length() == 0) continue
                 val comp = comps.getJSONObject(0)
-                val st = comp.optJSONObject("status")
-                val stType = st?.optJSONObject("type")
-                val statusName = stType?.optString("name", "") ?: ""
-                val statusDetail = stType?.optString("shortDetail", "Programado") ?: "Programado"
-                val isLive = statusName == "STATUS_IN_PROGRESS" || statusName == "STATUS_HALFTIME"
+
+                // CUOTAS REALES DE CASAS DE APUESTAS (DraftKings / ESPN)
+                var realOdds = RealOdds(2.20, 3.10, 3.20, 1.95, 1.80, "Estimadas", false)
+                val oddsArr = comp.optJSONArray("odds")
+                if (oddsArr != null && oddsArr.length() > 0) {
+                    val oObj = oddsArr.getJSONObject(0)
+                    val details = oObj.optString("details", "")
+                    val ml = oObj.optJSONObject("moneyline")
+                    var h = 0.0
+                    var d = 0.0
+                    var a = 0.0
+
+                    if (ml != null) {
+                        val ho = ml.optString("home", "")
+                        val dro = ml.optString("draw", "")
+                        val ao = ml.optString("away", "")
+                        if (ho.isNotEmpty()) {
+                            h = parseAmerican(ho)
+                            d = parseAmerican(dro)
+                            a = parseAmerican(ao)
+                        }
+                    }
+
+                    val totalObj = oObj.optJSONObject("total")
+                    var ov = 1.90
+                    var un = 1.85
+                    if (totalObj != null) {
+                        val ovo = totalObj.optString("over", "")
+                        val uno = totalObj.optString("under", "")
+                        if (!ovo.isNullOrEmpty()) ov = parseAmerican(ovo)
+                        if (!uno.isNullOrEmpty()) un = parseAmerican(uno)
+                    }
+
+                    if (h > 1.05 && a > 1.05) {
+                        if (d <= 1.05) d = 3.15
+                        realOdds = RealOdds(h, d, a, ov, un, details, true)
+                    }
+                }
 
                 val competitors = comp.optJSONArray("competitors") ?: continue
-                var home = Team("Local", "LOC", "-")
-                var away = Team("Visitante", "VIS", "-")
+                var home = Team("Local", "LOC", "-", "", "", "")
+                var away = Team("Visitante", "VIS", "-", "", "", "")
 
-                for (j in 0 until competitors.length()) {
-                    val c = competitors.getJSONObject(j)
-                    val tm = c.optJSONObject("team")
-                    val name = tm?.optString("displayName", "Equipo") ?: "Equipo"
-                    val shortName = tm?.optString("shortDisplayName", name) ?: name
+                for (cIdx in 0 until competitors.length()) {
+                    val c = competitors.getJSONObject(cIdx)
+                    val t = c.optJSONObject("team")
+                    val name = t?.optString("displayName", "Equipo") ?: "Equipo"
+                    val shortName = t?.optString("shortDisplayName", name) ?: name
                     val sc = c.optString("score", "-")
-                    val isHome = c.optString("homeAway", "home") == "home"
-                    if (isHome) home = Team(name, shortName, sc) else away = Team(name, shortName, sc)
+
+                    val recs = c.optJSONArray("records")
+                    val recStr = if (recs != null && recs.length() > 0) recs.getJSONObject(0).optString("summary", "") else ""
+
+                    // Goleador lider real de ESPN
+                    var lName = ""
+                    var lStat = ""
+                    val leadArr = c.optJSONArray("leaders")
+                    if (leadArr != null && leadArr.length() > 0) {
+                        val lList = leadArr.getJSONObject(0).optJSONArray("leaders")
+                        if (lList != null && lList.length() > 0) {
+                            val lObj = lList.getJSONObject(0)
+                            lStat = lObj.optString("displayValue", "")
+                            lName = lObj.optJSONObject("athlete")?.optString("fullName", "") ?: ""
+                        }
+                    }
+
+                    val teamObj = Team(name, shortName, sc, recStr, lName, lStat)
+                    if (c.optString("homeAway", "home") == "home") home = teamObj else away = teamObj
                 }
-                list.add(Match(id, home, away, statusDetail, isLive))
+
+                list.add(Match(id, home, away, statusDetail, isLive, timeArg, realOdds))
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) { e.printStackTrace() }
         list
     }
 }
@@ -139,8 +323,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF0F172A)) {
-                    AppScreen()
+                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF090D16)) {
+                    FootballAppScreen()
                 }
             }
         }
@@ -148,157 +332,77 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppScreen() {
+fun FootballAppScreen() {
     var selectedLeague by remember { mutableStateOf(LEAGUES[0]) }
     var matches by remember { mutableStateOf<List<Match>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(true) }
     var expandedId by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    fun refresh(l: LeagueItem) {
+    fun refresh(league: LeagueItem) {
         scope.launch {
             loading = true
             expandedId = null
-            matches = EspnApiService.fetchScoreboard(l.slug)
+            matches = FootballRepository.getScoreboard(league.slug)
             loading = false
         }
     }
 
-    LaunchedEffect(selectedLeague) { refresh(selectedLeague) }
+    LaunchedEffect(selectedLeague) {
+        refresh(selectedLeague)
+    }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF0F172A))) {
-        Column(modifier = Modifier.fillMaxWidth().background(Color(0xFF1E293B)).padding(14.dp)) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Header Deportivo Premium
+        Box(
+            modifier = Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xFF1E1B4B), Color(0xFF0F172A)))).padding(horizontal = 16.dp, vertical = 14.dp)
+        ) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Football Stats & Bets", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("ESPN Multi-Liga & Pronosticos", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                Column {
+                    Text("PRO FOOTBALL STATS", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                    Text("Predicciones y Cuotas Reales", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
                 }
+                Spacer(modifier = Modifier.weight(1f))
                 Button(
                     onClick = { refresh(selectedLeague) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                    shape = RoundedCornerShape(8.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Text("Actualizar", fontSize = 12.sp)
+                    Text("Actualizar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LEAGUES.forEach { l ->
-                    val sel = l.id == selectedLeague.id
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(if (sel) Color(0xFF10B981) else Color(0xFF334155))
-                            .clickable { selectedLeague = l }
-                            .padding(horizontal = 12.dp, vertical = 7.dp)
-                    ) {
-                        Text("[" + l.country + "] " + l.name, color = if (sel) Color.White else Color(0xFFCBD5E1), fontSize = 12.sp)
-                    }
+        // Selector de Ligas horizontal
+        Row(
+            modifier = Modifier.fillMaxWidth().background(Color(0xFF0B1120)).horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            LEAGUES.forEach { leg ->
+                val isSel = (leg.id == selectedLeague.id)
+                Box(
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        .background(if (isSel) Color(0xFF2563EB) else Color(0xFF1E293B))
+                        .border(1.dp, if (isSel) Color(0xFF60A5FA) else Color.Transparent, RoundedCornerShape(8.dp))
+                        .clickable { selectedLeague = leg }
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                ) {
+                    Text(leg.name, color = if (isSel) Color.White else Color(0xFF94A3B8), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
         if (loading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFF10B981))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = Color(0xFF38BDF8))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Cargando partidos y cuotas en vivo...", color = Color(0xFF94A3B8), fontSize = 13.sp)
+                }
             }
         } else if (matches.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No hay partidos programados hoy para esta liga", color = Color(0xFF94A3B8), fontSize = 14.sp)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                matches.forEach { m ->
-                    item(key = m.id) {
-                        CardItem(
-                            m = m,
-                            abierto = (expandedId == m.id),
-                            onToggle = { expandedId = if (expandedId == m.id) null else m.id }
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun CardItem(m: Match, abierto: Boolean, onToggle: () -> Unit) {
-    val p = remember(m.id) { BettingAnalyticsEngine.calculate(m) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { onToggle() },
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(if (m.live) Color(0xFFDC2626) else Color(0xFF0284C7))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(m.status, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                Text(if (abierto) "Ocultar ▲" else "Pronosticos ▼", color = Color(0xFF38BDF8), fontSize = 12.sp)
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(m.home.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), textAlign = TextAlign.End, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Box(
-                    modifier = Modifier.padding(horizontal = 8.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF0F172A)).padding(horizontal = 10.dp, vertical = 4.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(if (m.home.score != "-" && m.home.score.isNotEmpty()) m.home.score + " - " + m.away.score else "VS", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                }
-                Text(m.away.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), textAlign = TextAlign.Start, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Pick: " + p.doubleC, color = Color(0xFFFBBF24), fontSize = 11.sp)
-                Spacer(modifier = Modifier.weight(1f))
-                Text("Parlay Cuota: " + p.parlayOdds, color = Color(0xFF34D399), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
-
-            if (abierto) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF334155)))
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text("PRONOSTICOS DEL PARTIDO", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(6.dp))
-                InfoTag("Cuotas 1X2", p.odds1X2, Color.White)
-                InfoTag("Doble Oportunidad", p.doubleC, Color(0xFF60A5FA))
-                InfoTag("Goles (+/- 2.5)", p.goals, Color(0xFFF472B6))
-                InfoTag("Tiros al Arco", p.shots, Color(0xFFA78BFA))
-                InfoTag("Tarjetas", p.cards, Color(0xFFFBBF24))
-                InfoTag("Corners", p.corners, Color(0xFF2DD4BF))
-                InfoTag("Estrella", p.star, Color(0xFF5EEAD4))
-                InfoTag("Parlay", p.parlay + " (Cuota " + p.parlayOdds + ")", Color(0xFFA5B4FC))
-            }
-        }
-    }
-}
-
-@Composable
-fun InfoTag(label: String, value: String, col: Color) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF0F172A)).padding(horizontal = 8.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label, color = Color(0xFF94A3B8), fontSize = 11.sp)
-        Spacer(modifier = Modifier.weight(1f))
-        Text(value, color = col, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End)
-    }
-}
+            Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("No hay partidos programados hoy para " + selectedLeague.name, color = Color(0xFF94A3B8), fontSize = 14.sp, textAlign = TextAlign.Center)
+                    Space

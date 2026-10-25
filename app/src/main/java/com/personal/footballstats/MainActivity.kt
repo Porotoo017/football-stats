@@ -26,11 +26,8 @@ import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import okhttp3.MediaType.Companion.toMediaType
 import retrofit2.http.GET
-import retrofit2.http.Query
 import retrofit2.http.Header
 import java.util.concurrent.TimeUnit
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,55 +44,32 @@ class MainActivity : ComponentActivity() {
 data class TeamDto(val name: String)
 
 @Serializable
-data class LeagueDto(val name: String)
+data class CompetitionDto(val name: String)
 
 @Serializable
-data class FixtureDto(
+data class MatchDto(
     val id: Int,
-    @SerialName("start_time") val startTime: String? = null,
-    val home_team: String? = null,
-    val away_team: String? = null,
-    val league: LeagueDto? = null
+    @SerialName("utcDate") val utcDate: String,
+    val homeTeam: TeamDto,
+    val awayTeam: TeamDto,
+    val competition: CompetitionDto
 )
 
 @Serializable
-data class FixtureResponse(val response: List<FixtureDto>)
-
-@Serializable
-data class PercentDto(val home: String? = null, val draw: String? = null, val away: String? = null)
-@Serializable
-data class ComparisonDto(val percent: PercentDto? = null)
-
-@Serializable
-data class PredictionDataDto(val comparison: ComparisonDto? = null)
-
-@Serializable
-data class PredictionResponse(val response: List<PredictionDataDto>)
+data class MatchesResponse(val matches: List<MatchDto>)
 
 interface ApiService {
-    @GET("fixtures")
-    suspend fun getFixtures(
-        @Query("date") date: String,
-        @Query("league") league: Int,
-        @Query("season") season: Int,
-        @Header("x-apisports-key") apiKey: String
-    ): FixtureResponse
-
-    @GET("predictions")
-    suspend fun getPrediction(
-        @Query("fixture") fixtureId: Int,
-        @Header("x-apisports-key") apiKey: String
-    ): PredictionResponse
+    @GET("competitions/PL/matches")
+    suspend fun getMatches(
+        @Header("X-Auth-Token") token: String
+    ): MatchesResponse
 }
 
 data class MatchUi(
     val id: Int,
     val homeTeam: String,
     val awayTeam: String,
-    val league: String,
-    val probHome: Double,
-    val probDraw: Double,
-    val probAway: Double
+    val league: String
 )
 
 class MainViewModel : ViewModel() {
@@ -122,45 +96,28 @@ class MainViewModel : ViewModel() {
         _error.value = null
         viewModelScope.launch {
             try {
-                val today = "2024-05-20
                 val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).build()
                 val json = Json { ignoreUnknownKeys = true }
                 val retrofit = Retrofit.Builder()
-                    .baseUrl("https://v3.football.api-sports.io/")
+                    .baseUrl("https://api.football-data.org/v4/")
                     .client(client)
                     .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
                     .build()
                 val api = retrofit.create(ApiService::class.java)
 
-                val leagues = listOf(39, 140, 135, 78, 61, 2, 3, 128, 71, 253)
-                val allMatches = mutableListOf<MatchUi>()
-
-                for (league in leagues) {
-                    val fixtures = api.getFixtures(today, league, 2023, _apiKey.value).response
-                    for (fix in fixtures.take(3)) {
-                        try {
-                            val predRes = api.getPrediction(fix.id, _apiKey.value).response.firstOrNull()
-                            val p = predRes?.comparison?.percent
-                            if (p != null) {
-                                val ph = p.home?.replace("%", "")?.toDoubleOrNull()?.div(100) ?: 0.33
-                                val pd = p.draw?.replace("%", "")?.toDoubleOrNull()?.div(100) ?: 0.33
-                                val pa = p.away?.replace("%", "")?.toDoubleOrNull()?.div(100) ?: 0.33
-                                allMatches.add(
-                                    MatchUi(
-                                        fix.id,
-                                        fix.home_team ?: "Local",
-                                        fix.away_team ?: "Visitante",
-                                        fix.league?.name ?: "Liga",
-                                        ph, pd, pa
-                                    )
-                                )
-                            }
-                        } catch (e: Exception) { }
-                    }
+                // Busca los partidos de la Premier League
+                val response = api.getMatches(_apiKey.value)
+                val allMatches = response.matches.map { match ->
+                    MatchUi(
+                        id = match.id,
+                        homeTeam = match.homeTeam.name,
+                        awayTeam = match.awayTeam.name,
+                        league = match.competition.name
+                    )
                 }
                 _matches.value = allMatches
             } catch (e: Exception) {
-                _error.value = "Error: ${e.message}"
+                _error.value = "Error: ${e.localizedMessage}"
             } finally {
                 _isLoading.value = false
             }
@@ -175,23 +132,21 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
 
-    val selectedMatches = remember { mutableStateListOf<MatchUi>() }
-
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Football Stats", style = MaterialTheme.typography.headlineMedium)
+        Text("Football Stats (Nueva API)", style = MaterialTheme.typography.headlineMedium)
         Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedTextField(
             value = apiKey,
             onValueChange = { viewModel.setApiKey(it) },
-            label = { Text("API Key de API-Football") },
+            label = { Text("API Key (Football-Data.org)") },
             modifier = Modifier.fillMaxWidth()
         )
         
         Spacer(modifier = Modifier.height(8.dp))
         
         Button(onClick = { viewModel.loadMatches() }, modifier = Modifier.fillMaxWidth()) {
-            Text("Cargar Partidos de Hoy")
+            Text("Cargar Partidos de la Premier")
         }
 
         if (isLoading) {
@@ -204,40 +159,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(matches) { match ->
-                val isSelected = selectedMatches.any { it.id == match.id }
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    colors = CardDefaults.cardColors(containerColor = if(isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(match.league, style = MaterialTheme.typography.labelSmall)
                         Text("${match.homeTeam} vs ${match.awayTeam}", fontWeight = FontWeight.Bold)
-                        Text("Local: ${(match.probHome*100).toInt()}% | Empate: ${(match.probDraw*100).toInt()}% | Visita: ${(match.probAway*100).toInt()}%")
-                        
-                        Button(
-                            onClick = {
-                                if (isSelected) selectedMatches.removeAll { it.id == match.id }
-                                else if (selectedMatches.size < 4) selectedMatches.add(match)
-                            },
-                            modifier = Modifier.padding(top = 8.dp)
-                        ) {
-                            Text(if (isSelected) "Quitar" else "Añadir a Combinada")
-                        }
                     }
-                }
-            }
-        }
-
-        if (selectedMatches.isNotEmpty()) {
-            Card(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("Tu Combinada (${selectedMatches.size}/4)", fontWeight = FontWeight.Bold)
-                    var jointProb = 1.0
-                    selectedMatches.forEach { m ->
-                        val maxP = maxOf(m.probHome, m.probDraw, m.probAway)
-                        jointProb *= maxP
-                    }
-                    Text("Probabilidad de acierto estimada: ${String.format("%.2f", jointProb * 100)}%")
                 }
             }
         }

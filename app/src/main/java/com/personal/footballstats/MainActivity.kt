@@ -6,34 +6,12 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,55 +24,18 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 import kotlin.math.abs
 
-data class LeagueItem(
-    val id: String,
-    val name: String,
-    val country: String,
-    val slug: String
-)
-
-data class Team(
-    val id: String,
-    val name: String,
-    val shortName: String,
-    val score: String
-)
-
-data class Match(
-    val id: String,
-    val homeTeam: Team,
-    val awayTeam: Team,
-    val statusText: String,
-    val isLive: Boolean,
-    val isFinished: Boolean,
-    val startTime: String,
-    val leagueName: String
-)
-
+data class LeagueItem(val id: String, val name: String, val country: String, val slug: String)
+data class Team(val name: String, val shortName: String, val score: String)
+data class Match(val id: String, val home: Team, val away: Team, val status: String, val live: Boolean)
 data class Prediction(
-    val homeOdds: String,
-    val drawOdds: String,
-    val awayOdds: String,
-    val recommendedPick: String,
-    val doubleChance: String,
-    val overUnderPick: String,
-    val shotsOnTargetPick: String,
-    val totalCardsPick: String,
-    val cornersPick: String,
-    val starPlayerName: String,
-    val starPlayerTeam: String,
-    val starPlayerProp: String,
-    val parlayPick: String,
-    val parlayOdds: String
+    val odds1X2: String, val doubleC: String, val goals: String,
+    val shots: String, val cards: String, val corners: String,
+    val star: String, val parlay: String, val parlayOdds: String
 )
 
 val LEAGUES = listOf(
@@ -113,202 +54,83 @@ val LEAGUES = listOf(
 )
 
 object BettingAnalyticsEngine {
-    private val starPlayers = mapOf(
-        "Boca Juniors" to Pair("Edinson Cavani", "+1.5 remates al arco (Cuota 1.85)"),
-        "Boca" to Pair("Edinson Cavani", "+1.5 remates al arco (Cuota 1.85)"),
-        "River Plate" to Pair("Miguel Borja", "+1.5 remates al arco (Cuota 1.75)"),
-        "River" to Pair("Miguel Borja", "+1.5 remates al arco (Cuota 1.75)"),
-        "Racing Club" to Pair("Adrian Martinez", "+1.5 remates al arco (Cuota 1.90)"),
-        "Racing" to Pair("Adrian Martinez", "+1.5 remates al arco (Cuota 1.90)"),
-        "Independiente" to Pair("Gabriel Avalos", "+1.5 remates al arco (Cuota 2.10)"),
-        "San Lorenzo" to Pair("Alexis Cuello", "+0.5 remates al arco (Cuota 1.70)"),
-        "Real Madrid" to Pair("Vinicius Jr", "+2.5 remates totales (Cuota 1.65)"),
-        "Barcelona" to Pair("Robert Lewandowski", "+1.5 remates al arco (Cuota 1.70)"),
-        "Atletico Madrid" to Pair("Julian Alvarez", "+1.5 remates al arco (Cuota 1.80)"),
-        "Manchester City" to Pair("Erling Haaland", "Gol o asistencia (Cuota 1.55)"),
-        "Arsenal" to Pair("Bukayo Saka", "+1.5 remates al arco (Cuota 1.95)"),
-        "Liverpool" to Pair("Mohamed Salah", "+1.5 remates al arco (Cuota 1.65)"),
-        "Inter Miami CF" to Pair("Lionel Messi", "Gol o asistencia (Cuota 1.50)"),
-        "Inter Miami" to Pair("Lionel Messi", "Gol o asistencia (Cuota 1.50)"),
-        "Paris Saint-Germain" to Pair("Ousmane Dembele", "+2.5 remates (Cuota 1.80)"),
-        "Bayern Munich" to Pair("Harry Kane", "+1.5 remates al arco (Cuota 1.60)"),
-        "Inter" to Pair("Lautaro Martinez", "+1.5 remates al arco (Cuota 1.75)"),
-        "Flamengo" to Pair("Pedro", "+1.5 remates al arco (Cuota 1.80)"),
-        "Palmeiras" to Pair("Raphael Veiga", "+1.5 remates (Cuota 1.90)")
-    )
-
-    fun calculate(match: Match): Prediction {
-        val seed = abs((match.homeTeam.name + match.awayTeam.name + match.id).hashCode())
-        val homeStrength = (seed % 100) / 100.0
-        val isDerby = match.leagueName.contains("Argentina") || match.homeTeam.name.contains("Boca") || match.homeTeam.name.contains("River") || match.homeTeam.name.contains("Real")
-
-        val hOdds: String
-        val dOdds: String
-        val aOdds: String
-        val recPick: String
-        val doubleC: String
-
-        if (homeStrength > 0.55) {
-            hOdds = String.format(Locale.US, "%.2f", 1.65 + (seed % 35) / 100.0)
-            dOdds = String.format(Locale.US, "%.2f", 3.20 + (seed % 40) / 100.0)
-            aOdds = String.format(Locale.US, "%.2f", 4.00 + (seed % 80) / 100.0)
-            recPick = "Gana " + match.homeTeam.shortName + " (1)"
-            doubleC = "1X (" + match.homeTeam.shortName + " o Empate)"
-        } else if (homeStrength < 0.40) {
-            hOdds = String.format(Locale.US, "%.2f", 3.40 + (seed % 60) / 100.0)
-            dOdds = String.format(Locale.US, "%.2f", 3.10 + (seed % 30) / 100.0)
-            aOdds = String.format(Locale.US, "%.2f", 1.90 + (seed % 40) / 100.0)
-            recPick = "Gana " + match.awayTeam.shortName + " (2)"
-            doubleC = "X2 (Empate o " + match.awayTeam.shortName + ")"
+    fun calculate(m: Match): Prediction {
+        val seed = abs((m.home.name + m.away.name + m.id).hashCode())
+        val str = (seed % 100) / 100.0
+        val (odds, dc) = if (str > 0.55) {
+            val o = String.format(Locale.US, "1: %.2f | X: %.2f | 2: %.2f", 1.70 + (seed % 30) / 100.0, 3.30, 4.20)
+            Pair(o, "1X (" + m.home.shortName + " o Empate)")
+        } else if (str < 0.40) {
+            val o = String.format(Locale.US, "1: %.2f | X: %.2f | 2: %.2f", 4.10, 3.20, 1.85 + (seed % 30) / 100.0)
+            Pair(o, "X2 (Empate o " + m.away.shortName + ")")
         } else {
-            hOdds = String.format(Locale.US, "%.2f", 2.45 + (seed % 30) / 100.0)
-            dOdds = String.format(Locale.US, "%.2f", 2.95 + (seed % 20) / 100.0)
-            aOdds = String.format(Locale.US, "%.2f", 2.75 + (seed % 30) / 100.0)
-            recPick = "Empate o Partido Cerrado (X)"
-            doubleC = "12 (Cualquiera gana, sin empate)"
+            val o = String.format(Locale.US, "1: %.2f | X: %.2f | 2: %.2f", 2.60, 2.90, 2.80)
+            Pair(o, "12 (Gana Cualquiera)")
         }
 
-        val overUnder = if (seed % 2 == 0) {
-            "Mas de 2.5 Goles (Cuota 1.92)"
-        } else {
-            "Menos de 2.5 Goles (Cuota 1.80)"
+        val goals = if (seed % 2 == 0) "+2.5 Goles (Cuota 1.95)" else "-2.5 Goles (Cuota 1.80)"
+        val shots = if (seed % 3 == 0) "+9.5 Remates al arco (1.88)" else "+8.5 Remates al arco (1.75)"
+        val cards = if (seed % 2 == 0) "+4.5 Tarjetas (1.75)" else "+5.5 Tarjetas (1.90)"
+        val corners = if (seed % 2 == 0) "+8.5 Corners (1.80)" else "+9.5 Corners (2.00)"
+
+        val starPlayer = when {
+            m.home.name.contains("Boca") -> "E. Cavani (+1.5 remates al arco - 1.85)"
+            m.home.name.contains("River") -> "M. Borja (+1.5 remates al arco - 1.75)"
+            m.home.name.contains("Racing") -> "A. Martinez (+1.5 remates - 1.90)"
+            m.home.name.contains("Real") -> "Vinicius Jr (+2.5 tiros totales - 1.65)"
+            m.home.name.contains("Barca") || m.home.name.contains("Barcelona") -> "R. Lewandowski (+1.5 remates - 1.70)"
+            m.home.name.contains("Miami") -> "L. Messi (Gol o asistencia - 1.50)"
+            m.home.name.contains("City") -> "E. Haaland (Gol o asistencia - 1.55)"
+            else -> "Delantero Estrella (+1.5 tiros - 1.80)"
         }
 
-        val shots = if (seed % 3 == 0) {
-            "Mas de 9.5 Remates al arco (Cuota 1.88)"
-        } else {
-            "Mas de 8.5 Remates al arco (Cuota 1.72)"
-        }
+        val parlay = dc + " + Mas de 1.5 goles + Mas de 7.5 corners"
+        val pOdds = String.format(Locale.US, "%.2f", 4.20 + (seed % 250) / 100.0)
 
-        val cards = if (isDerby) {
-            "Mas de 5.5 Tarjetas (Partido de alta friccion, Cuota 1.85)"
-        } else {
-            "Mas de 4.5 Tarjetas totales (Cuota 1.75)"
-        }
-
-        val corners = if (seed % 2 == 0) {
-            "Mas de 8.5 Corners (Cuota 1.80)"
-        } else {
-            "Mas de 9.5 Corners (Cuota 2.05)"
-        }
-
-        var starPair = starPlayers[match.homeTeam.name]
-        var starTeam = match.homeTeam.name
-        if (starPair == null) {
-            starPair = starPlayers[match.awayTeam.name]
-            starTeam = match.awayTeam.name
-        }
-        if (starPair == null) {
-            val fallbackPlayer = if (seed % 2 == 0) "Centrodelantero titular" else "Extremo goleador"
-            starPair = Pair(fallbackPlayer, "+1.5 remates totales (Cuota 1.80)")
-            starTeam = match.homeTeam.shortName
-        }
-
-        val parlay = doubleC + " + Mas de 1.5 goles + Mas de 7.5 corners"
-        val parlayOdds = String.format(Locale.US, "%.2f", 4.20 + (seed % 250) / 100.0)
-
-        return Prediction(
-            homeOdds = hOdds,
-            drawOdds = dOdds,
-            awayOdds = aOdds,
-            recommendedPick = recPick,
-            doubleChance = doubleC,
-            overUnderPick = overUnder,
-            shotsOnTargetPick = shots,
-            totalCardsPick = cards,
-            cornersPick = corners,
-            starPlayerName = starPair.first,
-            starPlayerTeam = starTeam,
-            starPlayerProp = starPair.second,
-            parlayPick = parlay,
-            parlayOdds = parlayOdds
-        )
+        return Prediction(odds, dc, goals, shots, cards, corners, starPlayer, parlay, pOdds)
     }
 }
 
 object EspnApiService {
-    suspend fun fetchScoreboard(leagueSlug: String): List<Match> = withContext(Dispatchers.IO) {
-        val resultList = mutableListOf<Match>()
+    suspend fun fetchScoreboard(slug: String): List<Match> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Match>()
         try {
-            val urlString = "https://site.api.espn.com/apis/site/v2/sports/soccer/" + leagueSlug + "/scoreboard"
-            val url = URL(urlString)
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            val url = "https://site.api.espn.com/apis/site/v2/sports/soccer/" + slug + "/scoreboard"
+            val text = URL(url).readText()
+            val root = JSONObject(text)
+            val events = root.optJSONArray("events") ?: return@withContext list
 
-            if (conn.responseCode == 200) {
-                val reader = BufferedReader(InputStreamReader(conn.inputStream))
-                val response = StringBuilder()
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    response.append(line)
+            for (i in 0 until events.length()) {
+                val ev = events.getJSONObject(i)
+                val id = ev.optString("id", i.toString())
+                val comps = ev.optJSONArray("competitions") ?: continue
+                if (comps.length() == 0) continue
+                val comp = comps.getJSONObject(0)
+                val st = comp.optJSONObject("status")
+                val stType = st?.optJSONObject("type")
+                val statusName = stType?.optString("name", "") ?: ""
+                val statusDetail = stType?.optString("shortDetail", "Programado") ?: "Programado"
+                val isLive = statusName == "STATUS_IN_PROGRESS" || statusName == "STATUS_HALFTIME"
+
+                val competitors = comp.optJSONArray("competitors") ?: continue
+                var home = Team("Local", "LOC", "-")
+                var away = Team("Visitante", "VIS", "-")
+
+                for (j in 0 until competitors.length()) {
+                    val c = competitors.getJSONObject(j)
+                    val tm = c.optJSONObject("team")
+                    val name = tm?.optString("displayName", "Equipo") ?: "Equipo"
+                    val shortName = tm?.optString("shortDisplayName", name) ?: name
+                    val sc = c.optString("score", "-")
+                    val isHome = c.optString("homeAway", "home") == "home"
+                    if (isHome) home = Team(name, shortName, sc) else away = Team(name, shortName, sc)
                 }
-                reader.close()
-
-                val root = JSONObject(response.toString())
-                val leaguesArray = root.optJSONArray("leagues")
-                val leagueDisplayName = if (leaguesArray != null && leaguesArray.length() > 0) {
-                    leaguesArray.getJSONObject(0).optString("name", "Liga")
-                } else "Liga"
-
-                val events = root.optJSONArray("events") ?: JSONArray()
-                for (i in 0 until events.length()) {
-                    val event = events.getJSONObject(i)
-                    val id = event.optString("id", i.toString())
-                    val dateStr = event.optString("date", "")
-                    val competitions = event.optJSONArray("competitions") ?: continue
-                    if (competitions.length() == 0) continue
-
-                    val comp = competitions.getJSONObject(0)
-                    val statusObj = comp.optJSONObject("status")
-                    val statusType = statusObj?.optJSONObject("type")
-                    val statusName = statusType?.optString("name", "STATUS_SCHEDULED") ?: "STATUS_SCHEDULED"
-                    val statusDetail = statusType?.optString("shortDetail", "Programado") ?: "Programado"
-
-                    val isLive = statusName == "STATUS_IN_PROGRESS" || statusName == "STATUS_HALFTIME"
-                    val isFinished = statusName == "STATUS_FINAL"
-
-                    val competitors = comp.optJSONArray("competitors") ?: continue
-                    var homeTeam = Team("", "Local", "LOC", "-")
-                    var awayTeam = Team("", "Visitante", "VIS", "-")
-
-                    for (j in 0 until competitors.length()) {
-                        val c = competitors.getJSONObject(j)
-                        val homeAway = c.optString("homeAway", "home")
-                        val teamObj = c.optJSONObject("team")
-                        val tName = teamObj?.optString("displayName", if (homeAway == "home") "Local" else "Visitante") ?: ""
-                        val tShort = teamObj?.optString("shortDisplayName", tName) ?: tName
-                        val score = c.optString("score", "-")
-                        val tId = teamObj?.optString("id", "") ?: ""
-
-                        val team = Team(id = tId, name = tName, shortName = tShort, score = score)
-                        if (homeAway == "home") {
-                            homeTeam = team
-                        } else {
-                            awayTeam = team
-                        }
-                    }
-
-                    resultList.add(
-                        Match(
-                            id = id,
-                            homeTeam = homeTeam,
-                            awayTeam = awayTeam,
-                            statusText = statusDetail,
-                            isLive = isLive,
-                            isFinished = isFinished,
-                            startTime = dateStr,
-                            leagueName = leagueDisplayName
-                        )
-                    )
-                }
+                list.add(Match(id, home, away, statusDetail, isLive))
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        resultList
+        list
     }
 }
 
@@ -317,11 +139,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = Color(0xFF0F172A)
-                ) {
-                    FootballAppScreen()
+                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF0F172A)) {
+                    AppScreen()
                 }
             }
         }
@@ -329,154 +148,157 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun FootballAppScreen() {
+fun AppScreen() {
     var selectedLeague by remember { mutableStateOf(LEAGUES[0]) }
     var matches by remember { mutableStateOf<List<Match>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var expandedMatchId by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var expandedId by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    fun loadMatches(league: LeagueItem) {
+    fun refresh(l: LeagueItem) {
         scope.launch {
-            isLoading = true
-            errorMessage = null
-            expandedMatchId = null
-            try {
-                val data = EspnApiService.fetchScoreboard(league.slug)
-                matches = data
-                if (data.isEmpty()) {
-                    errorMessage = "No hay partidos programados hoy para " + league.name
-                }
-            } catch (e: Exception) {
-                errorMessage = "Error al conectar con ESPN: " + e.localizedMessage
-            } finally {
-                isLoading = false
-            }
+            loading = true
+            expandedId = null
+            matches = EspnApiService.fetchScoreboard(l.slug)
+            loading = false
         }
     }
 
-    LaunchedEffect(selectedLeague) {
-        loadMatches(selectedLeague)
-    }
+    LaunchedEffect(selectedLeague) { refresh(selectedLeague) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF0F172A))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF1E293B))
-                .padding(horizontal = 16.dp, vertical = 14.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF0F172A))) {
+        Column(modifier = Modifier.fillMaxWidth().background(Color(0xFF1E293B)).padding(14.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Football Stats & Bet Picks",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Resultados en Vivo y Pronosticos ESPN",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 12.sp
-                    )
+                    Text("Football Stats & Bets", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("ESPN Multi-Liga & Pronosticos", color = Color(0xFF94A3B8), fontSize = 12.sp)
                 }
-
                 Button(
-                    onClick = { loadMatches(selectedLeague) },
+                    onClick = { refresh(selectedLeague) },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Actualizar", color = Color.White, fontSize = 12.sp)
+                    Text("Actualizar", fontSize = 12.sp)
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                LEAGUES.forEach { league ->
-                    val isSelected = league.id == selectedLeague.id
+            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LEAGUES.forEach { l ->
+                    val sel = l.id == selectedLeague.id
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(20.dp))
-                            .background(if (isSelected) Color(0xFF10B981) else Color(0xFF334155))
-                            .clickable {
-                                if (selectedLeague.id != league.id) {
-                                    selectedLeague = league
-                                }
-                            }
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                            .background(if (sel) Color(0xFF10B981) else Color(0xFF334155))
+                            .clickable { selectedLeague = l }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
                     ) {
-                        Text(
-                            text = "[" + league.country + "] " + league.name,
-                            color = if (isSelected) Color.White else Color(0xFFCBD5E1),
-                            fontSize = 13.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        Text("[" + l.country + "] " + l.name, color = if (sel) Color.White else Color(0xFFCBD5E1), fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        if (loading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color(0xFF10B981))
+            }
+        } else if (matches.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No hay partidos programados hoy para esta liga", color = Color(0xFF94A3B8), fontSize = 14.sp)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                matches.forEach { m ->
+                    item(key = m.id) {
+                        CardItem(
+                            m = m,
+                            abierto = (expandedId == m.id),
+                            onToggle = { expandedId = if (expandedId == m.id) null else m.id }
                         )
                     }
                 }
             }
         }
+    }
+}
 
-        if (isLoading) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = Color(0xFF10B981))
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Cargando partidos de " + selectedLeague.name + "...",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 14.sp
-                    )
+@Composable
+fun CardItem(m: Match, abierto: Boolean, onToggle: () -> Unit) {
+    val p = remember(m.id) { BettingAnalyticsEngine.calculate(m) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onToggle() },
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (m.live) Color(0xFFDC2626) else Color(0xFF0284C7))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(m.status, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
+                Spacer(modifier = Modifier.weight(1f))
+                Text(if (abierto) "Ocultar ▲" else "Pronosticos ▼", color = Color(0xFF38BDF8), fontSize = 12.sp)
             }
-        } else if (matches.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = errorMessage ?: "No hay partidos en esta fecha",
-                        color = Color(0xFFCBD5E1),
-                        fontSize = 15.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = { loadMatches(selectedLeague) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6))
-                    ) {
-                        Text("Reintentar")
-                    }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(m.home.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), textAlign = TextAlign.End, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Box(
+                    modifier = Modifier.padding(horizontal = 8.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF0F172A)).padding(horizontal = 10.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(if (m.home.score != "-" && m.home.score.isNotEmpty()) m.home.score + " - " + m.away.score else "VS", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
+                Text(m.away.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), textAlign = TextAlign.Start, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                matches.forEach { match ->
-                    item(key = match.id) {
-                        MatchCard(
-                            match = match
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Pick: " + p.doubleC, color = Color(0xFFFBBF24), fontSize = 11.sp)
+                Spacer(modifier = Modifier.weight(1f))
+                Text("Parlay Cuota: " + p.parlayOdds, color = Color(0xFF34D399), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+
+            if (abierto) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF334155)))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text("PRONOSTICOS DEL PARTIDO", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(6.dp))
+                InfoTag("Cuotas 1X2", p.odds1X2, Color.White)
+                InfoTag("Doble Oportunidad", p.doubleC, Color(0xFF60A5FA))
+                InfoTag("Goles (+/- 2.5)", p.goals, Color(0xFFF472B6))
+                InfoTag("Tiros al Arco", p.shots, Color(0xFFA78BFA))
+                InfoTag("Tarjetas", p.cards, Color(0xFFFBBF24))
+                InfoTag("Corners", p.corners, Color(0xFF2DD4BF))
+                InfoTag("Estrella", p.star, Color(0xFF5EEAD4))
+                InfoTag("Parlay", p.parlay + " (Cuota " + p.parlayOdds + ")", Color(0xFFA5B4FC))
+            }
+        }
+    }
+}
+
+@Composable
+fun InfoTag(label: String, value: String, col: Color) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF0F172A)).padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = Color(0xFF94A3B8), fontSize = 11.sp)
+        Spacer(modifier = Modifier.weight(1f))
+        Text(value, color = col, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End)
+    }
+}

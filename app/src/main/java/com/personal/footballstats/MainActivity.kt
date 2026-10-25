@@ -25,8 +25,11 @@ import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import okhttp3.MediaType.Companion.toMediaType
+import retrofit2.HttpException
 import retrofit2.http.GET
 import retrofit2.http.Header
+import retrofit2.http.Query
+import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
@@ -41,27 +44,29 @@ class MainActivity : ComponentActivity() {
 }
 
 @Serializable
-data class TeamDto(val name: String)
+data class TeamDto(val name: String? = null)
 
 @Serializable
-data class CompetitionDto(val name: String)
+data class CompetitionDto(val name: String? = null)
 
 @Serializable
 data class MatchDto(
     val id: Int,
-    @SerialName("utcDate") val utcDate: String,
-    val homeTeam: TeamDto,
-    val awayTeam: TeamDto,
-    val competition: CompetitionDto
+    val homeTeam: TeamDto? = null,
+    val awayTeam: TeamDto? = null,
+    val competition: CompetitionDto? = null
 )
 
 @Serializable
-data class MatchesResponse(val matches: List<MatchDto>)
+data class MatchesResponse(val matches: List<MatchDto> = emptyList())
 
 interface ApiService {
-    @GET("competitions/PL/matches")
+    // Ahora le pasamos la fecha de hoy explícitamente
+    @GET("matches")
     suspend fun getMatches(
-        @Header("X-Auth-Token") token: String
+        @Header("X-Auth-Token") token: String,
+        @Query("dateFrom") dateFrom: String,
+        @Query("dateTo") dateTo: String
     ): MatchesResponse
 }
 
@@ -84,6 +89,9 @@ class MainViewModel : ViewModel() {
 
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
+    
+    private val _message = MutableStateFlow("")
+    val message = _message.asStateFlow()
 
     fun setApiKey(key: String) { _apiKey.value = key }
 
@@ -94,8 +102,12 @@ class MainViewModel : ViewModel() {
         }
         _isLoading.value = true
         _error.value = null
+        _message.value = "Buscando partidos..."
         viewModelScope.launch {
             try {
+                // Obtenemos la fecha de hoy en formato YYYY-MM-DD
+                val today = LocalDate.now().toString()
+                
                 val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).build()
                 val json = Json { ignoreUnknownKeys = true }
                 val retrofit = Retrofit.Builder()
@@ -105,19 +117,29 @@ class MainViewModel : ViewModel() {
                     .build()
                 val api = retrofit.create(ApiService::class.java)
 
-                // Busca los partidos de la Premier League
-                val response = api.getMatches(_apiKey.value)
+                val response = api.getMatches(_apiKey.value, today, today)
                 val allMatches = response.matches.map { match ->
                     MatchUi(
                         id = match.id,
-                        homeTeam = match.homeTeam.name,
-                        awayTeam = match.awayTeam.name,
-                        league = match.competition.name
+                        homeTeam = match.homeTeam?.name ?: "Local",
+                        awayTeam = match.awayTeam?.name ?: "Visitante",
+                        league = match.competition?.name ?: "Liga"
                     )
                 }
                 _matches.value = allMatches
+                
+                if (allMatches.isEmpty()) {
+                    _message.value = "La API respondió OK, pero no hay partidos hoy en las ligas disponibles."
+                } else {
+                    _message.value = "¡Se encontraron ${allMatches.size} partidos!"
+                }
+            } catch (e: HttpException) {
+                // Si la API nos rechaza, mostramos el código de error
+                _error.value = "Error HTTP ${e.code()}: ${e.message()}"
+                _message.value = ""
             } catch (e: Exception) {
-                _error.value = "Error: ${e.localizedMessage}"
+                _error.value = "Error de conexión: ${e.localizedMessage}"
+                _message.value = ""
             } finally {
                 _isLoading.value = false
             }
@@ -131,9 +153,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val matches by viewModel.matches.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val message by viewModel.message.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Football Stats (Nueva API)", style = MaterialTheme.typography.headlineMedium)
+        Text("Football Stats (Prueba API)", style = MaterialTheme.typography.headlineMedium)
         Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedTextField(
@@ -146,15 +169,19 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         Spacer(modifier = Modifier.height(8.dp))
         
         Button(onClick = { viewModel.loadMatches() }, modifier = Modifier.fillMaxWidth()) {
-            Text("Cargar Partidos de la Premier")
+            Text("Buscar Partidos de HOY")
         }
 
         if (isLoading) {
             CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally).padding(16.dp))
         }
         
+        if (message.isNotEmpty()) {
+            Text(message, modifier = Modifier.padding(8.dp))
+        }
+
         error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp))
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp), fontWeight = FontWeight.Bold)
         }
 
         LazyColumn(modifier = Modifier.weight(1f)) {

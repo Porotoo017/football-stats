@@ -76,13 +76,13 @@ class MainActivity : ComponentActivity() {
 }
 
 // ========================================================
-// 1. MODELOS DE PRONÓSTICOS Y MERCADOS DE APUESTAS
+// 1. MODELOS DE PRONOSTICOS Y MERCADOS DE APUESTAS
 // ========================================================
 
 data class PlayerProp(
     val playerName: String,
     val clubName: String,
-    val line: String,             // Ej: "Más de 1.5 remates al arco"
+    val line: String,             // Ej: "Mas de 1.5 remates al arco"
     val probability: String,      // Ej: "74%"
     val estimatedOdds: String     // Ej: "1.85"
 )
@@ -93,26 +93,26 @@ data class BettingPrediction(
     val goalsOverUnder: String,            // Goles (+/- 2.5)
     val totalShotsOnTarget: String,        // Remates al arco totales (+/- 8.5)
     val cardsOverUnder: String,            // Tarjetas (+/- 4.5 o 5.5)
-    val cornersOverUnder: String,          // Córners (+/- 8.5 o 9.5)
+    val cornersOverUnder: String,          // Corners (+/- 8.5 o 9.5)
     val playerProp: PlayerProp,            // Jugador remates al arco (Nombre, Apellido, Club)
     val parlayBetSummary: List<String>,    // Apuesta combinada recomendada
     val parlayTotalOdds: String            // Cuota combinada total (ej: "3.75")
 )
 
 // ========================================================
-// 2. MOTOR DE ANÁLISIS Y GENERACIÓN DE APUESTAS
+// 2. MOTOR DE ANALISIS Y GENERACION DE APUESTAS
 // ========================================================
 
 object BettingAnalyticsEngine {
 
-    // Base de datos de delanteros estrella por club
+    // Delanteros estrella por club
     private val STAR_PLAYERS = mapOf(
         "Boca" to Pair("Edinson Cavani", "Boca Juniors"),
         "River" to Pair("Miguel Borja", "River Plate"),
-        "Racing" to Pair("Adrián Martínez", "Racing Club"),
-        "Independiente" to Pair("Gabriel Ávalos", "Independiente"),
+        "Racing" to Pair("Adrian Martinez", "Racing Club"),
+        "Independiente" to Pair("Gabriel Avalos", "Independiente"),
         "San Lorenzo" to Pair("Alexis Cuello", "San Lorenzo"),
-        "Real Madrid" to Pair("Vinícius Jr", "Real Madrid"),
+        "Real Madrid" to Pair("Vinicius Jr", "Real Madrid"),
         "Barcelona" to Pair("Robert Lewandowski", "FC Barcelona"),
         "Arsenal" to Pair("Bukayo Saka", "Arsenal"),
         "City" to Pair("Erling Haaland", "Manchester City"),
@@ -120,11 +120,11 @@ object BettingAnalyticsEngine {
         "Inter Miami" to Pair("Lionel Messi", "Inter Miami"),
         "Flamengo" to Pair("Pedro", "Flamengo"),
         "Palmeiras" to Pair("Raphael Veiga", "Palmeiras"),
-        "Milan" to Pair("Rafael Leão", "AC Milan"),
-        "Juventus" to Pair("Dušan Vlahović", "Juventus"),
-        "Bayern" to Pair("Harry Kane", "Bayern Múnich"),
+        "Milan" to Pair("Rafael Leao", "AC Milan"),
+        "Juventus" to Pair("Dusan Vlahovic", "Juventus"),
+        "Bayern" to Pair("Harry Kane", "Bayern Munich"),
         "Dortmund" to Pair("Serhou Guirassy", "Borussia Dortmund"),
-        "PSG" to Pair("Ousmane Dembélé", "Paris Saint-Germain")
+        "PSG" to Pair("Ousmane Dembele", "Paris Saint-Germain")
     )
 
     fun generate(homeTeam: String, awayTeam: String, matchId: String): BettingPrediction {
@@ -147,21 +147,21 @@ object BettingAnalyticsEngine {
 
         // 3. Cantidad de Goles (+ / - 2.5)
         val isHighScoring = (seed % 10) > 3
-        val goalsLine = if (isHighScoring) "Más de 2.5 Goles" else "Menos de 2.5 Goles"
+        val goalsLine = if (isHighScoring) "Mas de 2.5 Goles" else "Menos de 2.5 Goles"
 
         // 4. Cantidad de Remates al arco totales (+ / -)
-        val shotsTotal = if ((seed % 2) == 0) "Más de 8.5 Remates al Arco" else "Más de 9.5 Remates al Arco"
+        val shotsTotal = if ((seed % 2) == 0) "Mas de 8.5 Remates al Arco" else "Mas de 9.5 Remates al Arco"
 
         // 5. Cantidad de Tarjetas (+ / - 4.5 o 5.5)
         val isCardIntense = homeTeam.contains("Boca", ignoreCase = true) || 
                             homeTeam.contains("River", ignoreCase = true) ||
                             (seed % 3) == 0
-        val cardsLine = if (isCardIntense) "Más de 5.5 Tarjetas" else "Más de 4.5 Tarjetas"
+        val cardsLine = if (isCardIntense) "Mas de 5.5 Tarjetas" else "Mas de 4.5 Tarjetas"
 
-        // 6. Cantidad de Córners (+ / -)
-        val cornersLine = if ((seed % 2) == 0) "Más de 8.5 Córners" else "Más de 9.5 Córners"
+        // 6. Cantidad de Corners (+ / -)
+        val cornersLine = if ((seed % 2) == 0) "Mas de 8.5 Corners" else "Mas de 9.5 Corners"
 
-        // 7. Jugador específico con Nombre, Apellido, Club y Remates
+        // 7. Jugador especifico con Nombre, Apellido, Club y Remates
         val key = STAR_PLAYERS.keys.firstOrNull { homeTeam.contains(it, ignoreCase = true) }
             ?: STAR_PLAYERS.keys.firstOrNull { awayTeam.contains(it, ignoreCase = true) }
 
@@ -174,17 +174,17 @@ object BettingAnalyticsEngine {
         val playerProp = PlayerProp(
             playerName = playerPair.first,
             clubName = playerPair.second,
-            line = "Más de 1.5 remates al arco",
+            line = "Mas de 1.5 remates al arco",
             probability = "74%",
             estimatedOdds = "1.85"
         )
 
-        // 8. Apuesta Combinada del Encuentro (Parlay Builder)
+        // 8. Apuesta Combinada del Encuentro
         val parlaySummary = listOf(
-            "🛡️ Doble Oportunidad: $doubleChance",
-            "⚽ Goles: Más de 1.5 goles totales",
-            "🎯 Remates: $shotsTotal",
-            "👟 Jugador: ${playerProp.playerName} (${playerProp.clubName}) +1.5 remates al arco"
+            "Doble Oportunidad: $doubleChance",
+            "Goles: Mas de 1.5 goles totales",
+            "Remates: $shotsTotal",
+            "Jugador: ${playerProp.playerName} (${playerProp.clubName}) +1.5 remates"
         )
 
         val parlayOdds = "3." + ((seed % 60) + 40).toString()
@@ -204,26 +204,26 @@ object BettingAnalyticsEngine {
 }
 
 // ========================================================
-// 3. CONFIGURACIÓN DE LIGAS (ARGENTINA, EUROPA, MLS, BRASIL)
+// 3. CONFIGURACION DE LIGAS (ARGENTINA, EUROPA, MLS, BRASIL)
 // ========================================================
 
 data class LeagueOption(
     val code: String,
     val name: String,
-    val flag: String
+    val tag: String
 )
 
 val LEAGUES_LIST = listOf(
-    LeagueOption("all", "Todas", "🌟"),
-    LeagueOption("arg.1", "Argentina", "🇦🇷"),
-    LeagueOption("esp.1", "La Liga", "🇪🇸"),
-    LeagueOption("eng.1", "Premier League", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
-    LeagueOption("uefa.champions", "Champions", "🏆"),
-    LeagueOption("usa.1", "MLS", "🇺🇸"),
-    LeagueOption("bra.1", "Brasileirão", "🇧🇷"),
-    LeagueOption("ita.1", "Serie A", "🇮🇹"),
-    LeagueOption("ger.1", "Bundesliga", "🇩🇪"),
-    LeagueOption("conmebol.libertadores", "Libertadores", "🌎")
+    LeagueOption("all", "Todas", "[ALL]"),
+    LeagueOption("arg.1", "Argentina", "[ARG]"),
+    LeagueOption("esp.1", "La Liga", "[ESP]"),
+    LeagueOption("eng.1", "Premier League", "[ENG]"),
+    LeagueOption("uefa.champions", "Champions", "[UEFA]"),
+    LeagueOption("usa.1", "MLS", "[USA]"),
+    LeagueOption("bra.1", "Brasileirao", "[BRA]"),
+    LeagueOption("ita.1", "Serie A", "[ITA]"),
+    LeagueOption("ger.1", "Bundesliga", "[GER]"),
+    LeagueOption("conmebol.libertadores", "Libertadores", "[CONMEBOL]")
 )
 
 // ========================================================
@@ -291,7 +291,7 @@ data class EspnResponse(
 )
 
 // ========================================================
-// 5. MODELO DE UI CON PRONÓSTICOS DE APUESTAS
+// 5. MODELO DE UI CON PRONOSTICOS DE APUESTAS
 // ========================================================
 
 data class MatchUi(
@@ -301,7 +301,7 @@ data class MatchUi(
     val homeScore: String?,
     val awayScore: String?,
     val leagueName: String,
-    val flag: String,
+    val tag: String,
     val statusText: String,
     val isLive: Boolean,
     val timeText: String,
@@ -394,7 +394,7 @@ class GlobalFootballViewModel : ViewModel() {
         _matches.value = emptyList()
 
         val league = _selectedLeague.value
-        _message.value = "Consultando partidos y cuotas para ${league.flag} ${league.name}..."
+        _message.value = "Consultando partidos para ${league.tag} ${league.name}..."
 
         val todayIso = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
         val todayParam = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"))
@@ -404,12 +404,12 @@ class GlobalFootballViewModel : ViewModel() {
             try {
                 val matchesList = if (league.code == "all") {
                     val activeLeagues = listOf(
-                        LeagueOption("arg.1", "Argentina", "🇦🇷"),
-                        LeagueOption("esp.1", "La Liga", "🇪🇸"),
-                        LeagueOption("eng.1", "Premier", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
-                        LeagueOption("usa.1", "MLS", "🇺🇸"),
-                        LeagueOption("bra.1", "Brasileirão", "🇧🇷"),
-                        LeagueOption("uefa.champions", "Champions", "🏆")
+                        LeagueOption("arg.1", "Argentina", "[ARG]"),
+                        LeagueOption("esp.1", "La Liga", "[ESP]"),
+                        LeagueOption("eng.1", "Premier", "[ENG]"),
+                        LeagueOption("usa.1", "MLS", "[USA]"),
+                        LeagueOption("bra.1", "Brasileirao", "[BRA]"),
+                        LeagueOption("uefa.champions", "Champions", "[UEFA]")
                     )
 
                     val deferredList = activeLeagues.map { l ->
@@ -433,14 +433,14 @@ class GlobalFootballViewModel : ViewModel() {
                 if (matchesList.isEmpty()) {
                     _message.value = "No hay partidos programados hoy ($todayIso) para ${league.name}."
                 } else {
-                    _message.value = "¡Se encontraron ${matchesList.size} partidos con pronósticos listos!"
+                    _message.value = "Se encontraron ${matchesList.size} partidos con pronosticos listos."
                 }
 
             } catch (e: SocketTimeoutException) {
-                _error.value = "⏳ Tiempo de espera agotado. El servidor tardó en responder."
+                _error.value = "Tiempo de espera agotado. El servidor tardo en responder."
                 _message.value = ""
             } catch (e: UnknownHostException) {
-                _error.value = "🌐 Sin conexión a Internet. Verifica el WiFi o datos de tu móvil."
+                _error.value = "Sin conexion a Internet. Verifica el WiFi o datos de tu movil."
                 _message.value = ""
             } catch (e: HttpException) {
                 _error.value = "Error del servidor (${e.code()}): ${e.message()}"
@@ -486,7 +486,6 @@ class GlobalFootballViewModel : ViewModel() {
                 if (dateStr.length >= 16) "${dateStr.substring(11, 16)} UTC" else ""
             } ?: ""
 
-            // Generación de pronósticos y mercados de apuestas
             val predictions = BettingAnalyticsEngine.generate(homeName, awayName, event.id)
 
             MatchUi(
@@ -496,7 +495,7 @@ class GlobalFootballViewModel : ViewModel() {
                 homeScore = homeComp?.score,
                 awayScore = awayComp?.score,
                 leagueName = leagueTitle,
-                flag = league.flag,
+                tag = league.tag,
                 statusText = statusText,
                 isLive = isLive,
                 timeText = timeText,
@@ -531,7 +530,7 @@ fun GlobalMainScreen(viewModel: GlobalFootballViewModel = viewModel()) {
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Hoy: $currentDate • Pronósticos & Combinadas",
+                            text = "Hoy: $currentDate - Pronosticos y Combinadas",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -539,4 +538,7 @@ fun GlobalMainScreen(viewModel: GlobalFootballViewModel = viewModel()) {
                 },
                 actions = {
                     IconButton(
-              
+                        onClick = { viewModel.loadMatches() },
+                        enabled = !isLoading
+                    ) {
+         

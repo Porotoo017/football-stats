@@ -6,14 +6,36 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,8 +54,6 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 
@@ -124,21 +144,30 @@ object BettingAnalyticsEngine {
         val homeStrength = (seed % 100) / 100.0
         val isDerby = match.leagueName.contains("Argentina") || match.homeTeam.name.contains("Boca") || match.homeTeam.name.contains("River") || match.homeTeam.name.contains("Real")
 
-        val (homeOdds, drawOdds, awayOdds, pick, dc) = if (homeStrength > 0.55) {
-            val h = String.format(Locale.US, "%.2f", 1.65 + (seed % 35) / 100.0)
-            val d = String.format(Locale.US, "%.2f", 3.20 + (seed % 40) / 100.0)
-            val a = String.format(Locale.US, "%.2f", 4.00 + (seed % 80) / 100.0)
-            Tuple5(h, d, a, "Gana " + match.homeTeam.shortName + " (1)", "1X (" + match.homeTeam.shortName + " o Empate)")
+        val hOdds: String
+        val dOdds: String
+        val aOdds: String
+        val recPick: String
+        val doubleC: String
+
+        if (homeStrength > 0.55) {
+            hOdds = String.format(Locale.US, "%.2f", 1.65 + (seed % 35) / 100.0)
+            dOdds = String.format(Locale.US, "%.2f", 3.20 + (seed % 40) / 100.0)
+            aOdds = String.format(Locale.US, "%.2f", 4.00 + (seed % 80) / 100.0)
+            recPick = "Gana " + match.homeTeam.shortName + " (1)"
+            doubleC = "1X (" + match.homeTeam.shortName + " o Empate)"
         } else if (homeStrength < 0.40) {
-            val h = String.format(Locale.US, "%.2f", 3.40 + (seed % 60) / 100.0)
-            val d = String.format(Locale.US, "%.2f", 3.10 + (seed % 30) / 100.0)
-            val a = String.format(Locale.US, "%.2f", 1.90 + (seed % 40) / 100.0)
-            Tuple5(h, d, a, "Gana " + match.awayTeam.shortName + " (2)", "X2 (Empate o " + match.awayTeam.shortName + ")")
+            hOdds = String.format(Locale.US, "%.2f", 3.40 + (seed % 60) / 100.0)
+            dOdds = String.format(Locale.US, "%.2f", 3.10 + (seed % 30) / 100.0)
+            aOdds = String.format(Locale.US, "%.2f", 1.90 + (seed % 40) / 100.0)
+            recPick = "Gana " + match.awayTeam.shortName + " (2)"
+            doubleC = "X2 (Empate o " + match.awayTeam.shortName + ")"
         } else {
-            val h = String.format(Locale.US, "%.2f", 2.45 + (seed % 30) / 100.0)
-            val d = String.format(Locale.US, "%.2f", 2.95 + (seed % 20) / 100.0)
-            val a = String.format(Locale.US, "%.2f", 2.75 + (seed % 30) / 100.0)
-            Tuple5(h, d, a, "Empate o Partido Cerrado (X)", "12 (Cualquiera gana, sin empate)")
+            hOdds = String.format(Locale.US, "%.2f", 2.45 + (seed % 30) / 100.0)
+            dOdds = String.format(Locale.US, "%.2f", 2.95 + (seed % 20) / 100.0)
+            aOdds = String.format(Locale.US, "%.2f", 2.75 + (seed % 30) / 100.0)
+            recPick = "Empate o Partido Cerrado (X)"
+            doubleC = "12 (Cualquiera gana, sin empate)"
         }
 
         val overUnder = if (seed % 2 == 0) {
@@ -177,15 +206,15 @@ object BettingAnalyticsEngine {
             starTeam = match.homeTeam.shortName
         }
 
-        val parlay = dc + " + Mas de 1.5 goles + Mas de 7.5 corners"
+        val parlay = doubleC + " + Mas de 1.5 goles + Mas de 7.5 corners"
         val parlayOdds = String.format(Locale.US, "%.2f", 4.20 + (seed % 250) / 100.0)
 
         return Prediction(
-            homeOdds = homeOdds,
-            drawOdds = drawOdds,
-            awayOdds = awayOdds,
-            recommendedPick = pick,
-            doubleChance = dc,
+            homeOdds = hOdds,
+            drawOdds = dOdds,
+            awayOdds = aOdds,
+            recommendedPick = recPick,
+            doubleChance = doubleC,
             overUnderPick = overUnder,
             shotsOnTargetPick = shots,
             totalCardsPick = cards,
@@ -198,14 +227,6 @@ object BettingAnalyticsEngine {
         )
     }
 }
-
-data class Tuple5<A, B, C, D, E>(
-    val a: A,
-    val b: B,
-    val c: C,
-    val d: D,
-    val e: E
-)
 
 object EspnApiService {
     suspend fun fetchScoreboard(leagueSlug: String): List<Match> = withContext(Dispatchers.IO) {
@@ -354,14 +375,13 @@ fun FootballAppScreen() {
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Football Stats & Bet Picks",
                         color = Color.White,
-                        fontSize = 20.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
@@ -459,38 +479,4 @@ fun FootballAppScreen() {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(matches) { match ->
-                    val isExpanded = expandedMatchId == match.id
-                    MatchCard(
-                        match = match,
-                        isExpanded = isExpanded,
-                        onToggleExpand = {
-                            expandedMatchId = if (isExpanded) null else match.id
-                        }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun MatchCard(
-    match: Match,
-    isExpanded: Boolean,
-    onToggleExpand: () -> Unit
-) {
-    val prediction = remember(match.id) { BettingAnalyticsEngine.calculate(match) }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onToggleExpand() },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.S
+                    val is

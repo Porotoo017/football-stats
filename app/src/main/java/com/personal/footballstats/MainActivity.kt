@@ -3,7 +3,6 @@ package com.personal.footballstats
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -541,4 +540,4 @@ fun GlobalMainScreen(viewModel: GlobalFootballViewModel = viewModel()) {
                         onClick = { viewModel.loadMatches() },
                         enabled = !isLoading
                     ) {
-         
+                        Icon(Icons.Default.Refresh, contentDes

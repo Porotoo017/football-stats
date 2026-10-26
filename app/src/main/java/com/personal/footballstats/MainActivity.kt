@@ -10,8 +10,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,39 +35,36 @@ import retrofit2.http.Path
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
+// MODELOS
 data class StarPlayer(val name: String, val club: String, val role: String, val avgShots: String, val pick: String, val prob: String, val odds: String)
 data class MatchOdds(val home: String, val draw: String, val away: String)
 data class BetData(val odds: MatchOdds, val favorite: String, val dc: String, val goals: String, val shots: String, val corn: String, val card: String, val star: StarPlayer, val parlay: String, val parlayOdds: String)
 data class League(val code: String, val name: String, val tag: String)
 
+// MOTOR DE APUESTAS Y DISPAROS AL ARCO
 object BetEngine {
-    private val GIANTS = setOf("boca", "river", "racing", "independiente", "san lorenzo", "velez", "flamengo", "palmeiras", "botafogo", "mineiro", "sao paulo", "madrid", "barcelona", "atletico", "city", "liverpool", "arsenal", "psg", "sporting", "benfica", "porto", "america", "monterrey", "tigres", "penarol", "nacional", "miami")
+    private val GIANTS = setOf("boca", "river", "racing", "independiente", "san lorenzo", "velez", "flamengo", "palmeiras", "mineiro", "madrid", "barcelona", "atletico", "city", "liverpool", "arsenal", "psg", "sporting", "benfica", "porto", "america", "monterrey", "tigres", "penarol", "nacional", "miami")
     private val STARS = mapOf(
-        "boca" to StarPlayer("Edinson Cavani", "Boca Juniors", "Delantero Centro", "3.6 remates (2.1 al arco)", "Mas de 1.5 disparos al arco", "84%", "1.82"),
-        "river" to StarPlayer("Miguel Borja", "River Plate", "Delantero Centro", "3.8 remates (2.3 al arco)", "Mas de 1.5 disparos al arco", "86%", "1.75"),
-        "racing" to StarPlayer("A. Maravilla Martinez", "Racing Club", "Delantero Centro", "3.5 remates (2.0 al arco)", "Mas de 1.5 disparos al arco", "82%", "1.85"),
-        "independiente" to StarPlayer("Gabriel Avalos", "Independiente", "Delantero Centro", "2.8 remates (1.5 al arco)", "Mas de 1.5 disparos al arco", "76%", "1.92"),
-        "san lorenzo" to StarPlayer("Alexis Cuello", "San Lorenzo", "Delantero", "2.7 remates (1.4 al arco)", "Mas de 1.5 disparos al arco", "74%", "1.95"),
-        "velez" to StarPlayer("Braian Romero", "Velez Sarsfield", "Delantero Centro", "3.2 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "79%", "1.88"),
-        "flamengo" to StarPlayer("Pedro Guilherme", "Flamengo", "Delantero Centro", "3.9 remates (2.4 al arco)", "Mas de 1.5 disparos al arco", "87%", "1.72"),
-        "palmeiras" to StarPlayer("Estevao Willian", "Palmeiras", "Extremo", "3.3 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "80%", "1.85"),
-        "mineiro" to StarPlayer("Hulk", "Atletico Mineiro", "Delantero", "4.1 remates (2.2 al arco)", "Mas de 1.5 disparos al arco", "85%", "1.78"),
-        "sao paulo" to StarPlayer("Jonathan Calleri", "Sao Paulo", "Delantero Centro", "3.0 remates (1.6 al arco)", "Mas de 1.5 disparos al arco", "78%", "1.88"),
-        "madrid" to StarPlayer("Vinicius Jr", "Real Madrid", "Extremo", "4.2 remates (2.5 al arco)", "Mas de 1.5 disparos al arco", "88%", "1.70"),
-        "barcelona" to StarPlayer("Robert Lewandowski", "FC Barcelona", "Delantero Centro", "4.0 remates (2.4 al arco)", "Mas de 1.5 disparos al arco", "87%", "1.74"),
-        "atletico" to StarPlayer("Julian Alvarez", "Atletico Madrid", "Delantero", "3.5 remates (2.0 al arco)", "Mas de 1.5 disparos al arco", "82%", "1.82"),
-        "city" to StarPlayer("Erling Haaland", "Manchester City", "Delantero Centro", "4.5 remates (2.8 al arco)", "Mas de 1.5 disparos al arco", "91%", "1.60"),
-        "liverpool" to StarPlayer("Mohamed Salah", "Liverpool", "Extremo", "3.9 remates (2.2 al arco)", "Mas de 1.5 disparos al arco", "86%", "1.76"),
-        "arsenal" to StarPlayer("Bukayo Saka", "Arsenal", "Extremo", "3.4 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "81%", "1.84"),
-        "psg" to StarPlayer("Bradley Barcola", "Paris SG", "Extremo", "3.3 remates (1.9 al arco)", "Mas de 1.5 disparos al arco", "80%", "1.85"),
-        "sporting" to StarPlayer("Viktor Gyokeres", "Sporting CP", "Delantero Centro", "4.4 remates (2.7 al arco)", "Mas de 1.5 disparos al arco", "90%", "1.65"),
-        "benfica" to StarPlayer("Angel Di Maria", "Benfica", "Extremo", "3.2 remates (1.7 al arco)", "Mas de 1.5 disparos al arco", "79%", "1.88"),
-        "america" to StarPlayer("Henry Martin", "Club America", "Delantero Centro", "3.3 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "80%", "1.85"),
-        "tigres" to StarPlayer("Andre-Pierre Gignac", "Tigres UANL", "Delantero Centro", "3.4 remates (1.9 al arco)", "Mas de 1.5 disparos al arco", "81%", "1.84"),
-        "penarol" to StarPlayer("Facundo Batista", "Penarol", "Delantero Centro", "2.9 remates (1.6 al arco)", "Mas de 1.5 disparos al arco", "77%", "1.90"),
-        "nacional" to StarPlayer("Ruben Bentancourt", "Nacional", "Delantero Centro", "3.0 remates (1.7 al arco)", "Mas de 1.5 disparos al arco", "78%", "1.88"),
-        "miami" to StarPlayer("Lionel Messi", "Inter Miami", "Mediapunta", "4.3 remates (2.6 al arco)", "Mas de 1.5 disparos al arco", "92%", "1.62")
+        "boca" to StarPlayer("Edinson Cavani", "Boca Juniors", "Delantero Centro", "3.6 remates (2.1 al arco)", "Mas de 1.5 al arco", "84%", "1.82"),
+        "river" to StarPlayer("Miguel Borja", "River Plate", "Delantero Centro", "3.8 remates (2.3 al arco)", "Mas de 1.5 al arco", "86%", "1.75"),
+        "racing" to StarPlayer("A. Maravilla Martinez", "Racing Club", "Delantero Centro", "3.5 remates (2.0 al arco)", "Mas de 1.5 al arco", "82%", "1.85"),
+        "independiente" to StarPlayer("Gabriel Avalos", "Independiente", "Delantero", "2.8 remates (1.5 al arco)", "Mas de 1.5 al arco", "76%", "1.92"),
+        "san lorenzo" to StarPlayer("Alexis Cuello", "San Lorenzo", "Delantero", "2.7 remates (1.4 al arco)", "Mas de 1.5 al arco", "74%", "1.95"),
+        "velez" to StarPlayer("Braian Romero", "Velez Sarsfield", "Delantero Centro", "3.2 remates (1.8 al arco)", "Mas de 1.5 al arco", "79%", "1.88"),
+        "flamengo" to StarPlayer("Pedro Guilherme", "Flamengo", "Delantero Centro", "3.9 remates (2.4 al arco)", "Mas de 1.5 al arco", "87%", "1.72"),
+        "palmeiras" to StarPlayer("Estevao Willian", "Palmeiras", "Extremo", "3.3 remates (1.8 al arco)", "Mas de 1.5 al arco", "80%", "1.85"),
+        "madrid" to StarPlayer("Vinicius Jr", "Real Madrid", "Extremo", "4.2 remates (2.5 al arco)", "Mas de 1.5 al arco", "88%", "1.70"),
+        "barcelona" to StarPlayer("Robert Lewandowski", "FC Barcelona", "Delantero Centro", "4.0 remates (2.4 al arco)", "Mas de 1.5 al arco", "87%", "1.74"),
+        "atletico" to StarPlayer("Julian Alvarez", "Atletico Madrid", "Delantero", "3.5 remates (2.0 al arco)", "Mas de 1.5 al arco", "82%", "1.82"),
+        "city" to StarPlayer("Erling Haaland", "Manchester City", "Delantero Centro", "4.5 remates (2.8 al arco)", "Mas de 1.5 al arco", "91%", "1.60"),
+        "liverpool" to StarPlayer("Mohamed Salah", "Liverpool", "Extremo", "3.9 remates (2.2 al arco)", "Mas de 1.5 al arco", "86%", "1.76"),
+        "psg" to StarPlayer("Bradley Barcola", "Paris SG", "Extremo", "3.3 remates (1.9 al arco)", "Mas de 1.5 al arco", "80%", "1.85"),
+        "sporting" to StarPlayer("Viktor Gyokeres", "Sporting CP", "Delantero Centro", "4.4 remates (2.7 al arco)", "Mas de 1.5 al arco", "90%", "1.65"),
+        "america" to StarPlayer("Henry Martin", "Club America", "Delantero Centro", "3.3 remates (1.8 al arco)", "Mas de 1.5 al arco", "80%", "1.85"),
+        "penarol" to StarPlayer("Facundo Batista", "Penarol", "Delantero Centro", "2.9 remates (1.6 al arco)", "Mas de 1.5 al arco", "77%", "1.90"),
+        "miami" to StarPlayer("Lionel Messi", "Inter Miami", "Mediapunta", "4.3 remates (2.6 al arco)", "Mas de 1.5 al arco", "92%", "1.62")
     )
+
     fun build(h: String, a: String, id: String): BetData {
         val s = abs((h + a + id).hashCode())
         val hl = h.lowercase(); val al = a.lowercase()
@@ -80,13 +75,14 @@ object BetEngine {
                    else MatchOdds("2." + (10 + (s % 25)), "3." + (15 + (s % 20)), "3." + (20 + (s % 30)))
         val dc = if (fav == a) "X2 (Empate o $a)" else "1X ($h o Empate)"
         val starKey = STARS.keys.firstOrNull { hl.contains(it) } ?: STARS.keys.firstOrNull { al.contains(it) }
-        val star = (if (starKey != null) STARS[starKey] else null) ?: StarPlayer("G. Rodriguez", fav, "Delantero Centro", "3.0 remates (1.6 al arco)", "Mas de 1.5 disparos al arco", "77%", "1.88")
+        val star = (if (starKey != null) STARS[starKey] else null) ?: StarPlayer("G. Rodriguez", fav, "Delantero Centro", "3.1 remates (1.7 al arco)", "Mas de 1.5 al arco", "78%", "1.88")
         val goals = if (s % 3 != 0) "Mas de 2.5 Goles" else "Menos de 2.5 Goles"
-        val parlay = "FAVORITO: $dc | Goles +1.5 | ${star.name} +1.5 al arco"
+        val parlay = "FAV: $dc | Goles +1.5 | ${star.name} +1.5 al arco"
         return BetData(odds, fav, dc, goals, "Mas de 8.5 Remates", "Mas de 8.5 Corners", "Mas de 4.5 Tarjetas", star, parlay, "3." + (40 + (s % 30)))
     }
 }
 
+// HORARIO ARGENTINO (GMT-3)
 fun formatArgTime(d: String?): String {
     if (d.isNullOrBlank() || !d.contains("T") || d.length < 16) return "Hoy"
     return try {
@@ -97,6 +93,7 @@ fun formatArgTime(d: String?): String {
     } catch (e: Exception) { "Hoy" }
 }
 
+// RED Y API DTOs
 @Serializable data class EspnTeam(val shortDisplayName: String? = null, val displayName: String? = null)
 @Serializable data class EspnComp(val homeAway: String? = null, val score: String? = null, val team: EspnTeam? = null)
 @Serializable data class EspnStatusWrapper(val displayClock: String? = null, val type: EspnStatusType? = null)
@@ -121,6 +118,7 @@ object Api {
     }
 }
 
+// VIEWMODEL CON LAS 10 LIGAS
 class MainViewModel : ViewModel() {
     val leagues = listOf(
         League("arg.1", "Argentina", "ARG"), League("bra.1", "Brasil", "BRA"),
@@ -156,6 +154,7 @@ class MainViewModel : ViewModel() {
     }
 }
 
+// COMPONENTES UI
 @Composable
 fun OddsPill(label: String, odd: String, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, color = Color(0xFF1E293B), shape = RoundedCornerShape(6.dp), border = BorderStroke(1.dp, Color(0xFF334155))) {
@@ -192,15 +191,12 @@ fun MatchCard(m: MatchUi) {
                 OddsPill("2 (Visitante)", b.odds.away, Modifier.weight(1f))
             }
             Spacer(modifier = Modifier.height(8.dp))
+            // JUGADOR CON MAS TIROS AL ARCO
             Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF0A221C), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Color(0xFF059669))) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("★", fontSize = 14.sp, color = Color(0xFFF59E0B))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("MAS TIROS AL ARCO", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF34D399))
-                        }
-                        Surface(color = Color(0x4010B981), shape = RoundedCornerShape(4.dp)) {
+                        Text("★ MAS TIROS AL ARCO", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF34D399))
+                        Surface(color = Color(0xFF064E3B), shape = RoundedCornerShape(4.dp)) {
                             Text("Cuota " + b.star.odds, fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF6EE7B7), modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
                         }
                     }
@@ -233,6 +229,7 @@ fun MatchCard(m: MatchUi) {
     }
 }
 
+// MAIN ACTIVITY
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -251,7 +248,9 @@ class MainActivity : ComponentActivity() {
                                 Text("BET PRO STATS", fontSize = 18.sp, fontWeight = FontWeight.Black, color = Color(0xFF38BDF8))
                                 Text("Horarios Hora Argentina (GMT-3) - Tiros al Arco", fontSize = 11.sp, color = Color(0xFF94A3B8))
                             }
-                            IconButton(onClick = { vm.load() }, enabled = !load) { Icon(Icons.Default.Refresh, null, tint = Color(0xFF38BDF8)) }
+                            Button(onClick = { vm.load() }, enabled = !load, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))) {
+                                Text("↻", fontSize = 16.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Black)
+                            }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -268,4 +267,17 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         Spacer(modifier = Modifier.height(10.dp))
-                        if (load) Box(modifier 
+                        if (load) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { CircularProgressIndicator(color = Color(0xFF38BDF8)) }
+                        else if (err != null && list.isEmpty()) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { Text(err ?: "", color = Color(0xFFEF4444), fontSize = 13.sp) }
+                        else if (list.isEmpty()) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { Text("No hay partidos hoy en " + sel.name, color = Color(0xFF64748B), fontSize = 13.sp) }
+                        else {
+                            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(list, key = { it.id }) { m -> MatchCard(m) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -104,7 +104,7 @@ object BetEngine {
                 Triple(a, o, "X2 (Empate o $a)")
             }
             else -> {
-                val o = MatchOdds("2." + (5 + (s % 25)), "3." + (15 + (s % 20)), "3." + (20 + (s % 30)))
+                val o = MatchOdds("2." + (10 + (s % 25)), "3." + (15 + (s % 20)), "3." + (20 + (s % 30)))
                 Triple(h, o, "1X ($h o Empate)")
             }
         }
@@ -295,4 +295,4 @@ fun MatchCard(m: MatchUi) {
             Spacer(modifier = Modifier.height(10.dp))
 
             // TARJETA VERDE ESMERALDA: JUGADOR CON MAS TIROS AL ARCO (NOMBRE, APELLIDO, CLUB, POSICION Y DISPAROS)
-            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF0A221C), shape = RoundedCornerShape(10.
+            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF0A221C), shape = RoundedCornerShape(10

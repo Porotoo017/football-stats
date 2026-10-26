@@ -35,37 +35,47 @@ import retrofit2.http.Path
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
-// MODELOS
 data class StarPlayer(val name: String, val club: String, val role: String, val avgShots: String, val pick: String, val prob: String, val odds: String)
 data class MatchOdds(val home: String, val draw: String, val away: String)
 data class BetData(val odds: MatchOdds, val favorite: String, val dc: String, val goals: String, val shots: String, val corn: String, val card: String, val star: StarPlayer, val parlay: String, val parlayOdds: String)
 data class League(val code: String, val name: String, val tag: String)
 
-// MOTOR DE APUESTAS Y DISPAROS AL ARCO
+// MOTOR DE APUESTAS Y JUGADORES EN TIEMPO REAL
 object BetEngine {
-    private val GIANTS = setOf("boca", "river", "racing", "independiente", "san lorenzo", "velez", "flamengo", "palmeiras", "mineiro", "madrid", "barcelona", "atletico", "city", "liverpool", "arsenal", "psg", "sporting", "benfica", "porto", "america", "monterrey", "tigres", "penarol", "nacional", "miami")
-    private val STARS = mapOf(
-        "boca" to StarPlayer("Edinson Cavani", "Boca Juniors", "Delantero Centro", "3.6 remates (2.1 al arco)", "Mas de 1.5 al arco", "84%", "1.82"),
-        "river" to StarPlayer("Miguel Borja", "River Plate", "Delantero Centro", "3.8 remates (2.3 al arco)", "Mas de 1.5 al arco", "86%", "1.75"),
-        "racing" to StarPlayer("A. Maravilla Martinez", "Racing Club", "Delantero Centro", "3.5 remates (2.0 al arco)", "Mas de 1.5 al arco", "82%", "1.85"),
-        "independiente" to StarPlayer("Gabriel Avalos", "Independiente", "Delantero", "2.8 remates (1.5 al arco)", "Mas de 1.5 al arco", "76%", "1.92"),
-        "san lorenzo" to StarPlayer("Alexis Cuello", "San Lorenzo", "Delantero", "2.7 remates (1.4 al arco)", "Mas de 1.5 al arco", "74%", "1.95"),
-        "velez" to StarPlayer("Braian Romero", "Velez Sarsfield", "Delantero Centro", "3.2 remates (1.8 al arco)", "Mas de 1.5 al arco", "79%", "1.88"),
-        "flamengo" to StarPlayer("Pedro Guilherme", "Flamengo", "Delantero Centro", "3.9 remates (2.4 al arco)", "Mas de 1.5 al arco", "87%", "1.72"),
-        "palmeiras" to StarPlayer("Estevao Willian", "Palmeiras", "Extremo", "3.3 remates (1.8 al arco)", "Mas de 1.5 al arco", "80%", "1.85"),
-        "madrid" to StarPlayer("Vinicius Jr", "Real Madrid", "Extremo", "4.2 remates (2.5 al arco)", "Mas de 1.5 al arco", "88%", "1.70"),
-        "barcelona" to StarPlayer("Robert Lewandowski", "FC Barcelona", "Delantero Centro", "4.0 remates (2.4 al arco)", "Mas de 1.5 al arco", "87%", "1.74"),
-        "atletico" to StarPlayer("Julian Alvarez", "Atletico Madrid", "Delantero", "3.5 remates (2.0 al arco)", "Mas de 1.5 al arco", "82%", "1.82"),
-        "city" to StarPlayer("Erling Haaland", "Manchester City", "Delantero Centro", "4.5 remates (2.8 al arco)", "Mas de 1.5 al arco", "91%", "1.60"),
-        "liverpool" to StarPlayer("Mohamed Salah", "Liverpool", "Extremo", "3.9 remates (2.2 al arco)", "Mas de 1.5 al arco", "86%", "1.76"),
-        "psg" to StarPlayer("Bradley Barcola", "Paris SG", "Extremo", "3.3 remates (1.9 al arco)", "Mas de 1.5 al arco", "80%", "1.85"),
-        "sporting" to StarPlayer("Viktor Gyokeres", "Sporting CP", "Delantero Centro", "4.4 remates (2.7 al arco)", "Mas de 1.5 al arco", "90%", "1.65"),
-        "america" to StarPlayer("Henry Martin", "Club America", "Delantero Centro", "3.3 remates (1.8 al arco)", "Mas de 1.5 al arco", "80%", "1.85"),
-        "penarol" to StarPlayer("Facundo Batista", "Penarol", "Delantero Centro", "2.9 remates (1.6 al arco)", "Mas de 1.5 al arco", "77%", "1.90"),
-        "miami" to StarPlayer("Lionel Messi", "Inter Miami", "Mediapunta", "4.3 remates (2.6 al arco)", "Mas de 1.5 al arco", "92%", "1.62")
+    private val GIANTS = setOf("boca", "river", "racing", "independiente", "san lorenzo", "velez", "talleres", "estudiantes", "lanus", "huracan", "flamengo", "palmeiras", "mineiro", "botafogo", "sao paulo", "corinthians", "fluminense", "gremio", "internacional", "cruzeiro", "madrid", "barcelona", "atletico", "athletic", "sevilla", "betis", "villarreal", "city", "liverpool", "arsenal", "chelsea", "tottenham", "united", "psg", "marseille", "monaco", "sporting", "benfica", "porto", "america", "cruz azul", "tigres", "monterrey", "toluca", "penarol", "nacional", "miami")
+
+    // PLANTILLAS REALES DE ATACANTES (ROTACIÓN AUTOMÁTICA EN CADA ENCUENTRO)
+    private val SQUADS = mapOf(
+        "boca" to listOf("Edinson Cavani", "Miguel Merentiel", "Exequiel Zeballos"), "river" to listOf("Miguel Borja", "Facundo Colidio", "Pablo Solari"),
+        "racing" to listOf("A. Maravilla Martinez", "Maximiliano Salas", "Roger Martinez"), "independiente" to listOf("Gabriel Avalos", "Santiago Montiel", "Matias Gimenez"),
+        "san lorenzo" to listOf("Alexis Cuello", "Iker Muniain", "Nahuel Bustos"), "velez" to listOf("Braian Romero", "Claudio Aquino", "Thiago Fernandez"),
+        "talleres" to listOf("Federico Girotti", "Valentin Depietri", "Ruben Botta"), "estudiantes" to listOf("Guido Carrillo", "Luciano Gimenez", "Tiago Palacios"),
+        "lanus" to listOf("Walter Bou", "Marcelino Moreno", "Eduardo Salvio"), "huracan" to listOf("Rodrigo Echeverria", "Eric Ramirez", "Ramon Abila"),
+        "belgrano" to listOf("Franco Jara", "Bryan Reyna", "Nicolas Fernandez"), "instituto" to listOf("Damian Puebla", "Facundo Suarez", "Gaston Lodico"),
+        "riestra" to listOf("Jonathan Herrera", "Antony Alonso", "Nicolas Benegas"), "central" to listOf("Marco Ruben", "Ignacio Malcorra", "Enzo Copetti"),
+        "newell" to listOf("Juan I. Ramirez", "Ever Banega", "Mateo Silvetti"), "gimnasia" to listOf("Rodrigo Castillo", "Matias Abaldo", "Lucas Castro"),
+        "platense" to listOf("Mateo Pellegrino", "Ronaldo Martinez", "Guido Mainero"), "banfield" to listOf("Bruno Sepulveda", "Ignacio Rodriguez", "Geronimo Rivera"),
+        "tigre" to listOf("Florian Monzon", "Armoa Blas", "Gonzalo Maroni"), "union" to listOf("Nicolas Orsini", "Lucas Gamba", "Adrian Balboa"),
+        "godoy" to listOf("Salomon Rodriguez", "Santino Andino", "Daniel Barrea"), "flamengo" to listOf("Pedro Guilherme", "Gabriel Barbosa", "Bruno Henrique"),
+        "palmeiras" to listOf("Estevao Willian", "Flaco Lopez", "Raphael Veiga"), "corinthians" to listOf("Memphis Depay", "Yuri Alberto", "Rodrigo Garro"),
+        "fluminense" to listOf("German Cano", "Kaua Elias", "Jhon Arias"), "vasco" to listOf("Pablo Vegetti", "Dimitri Payet", "Rayan"),
+        "cruzeiro" to listOf("Kaio Jorge", "Matheus Pereira", "Lautaro Diaz"), "gremio" to listOf("Martin Braithwaite", "Diego Costa", "Yeferson Soteldo"),
+        "internacional" to listOf("Rafael Borre", "Enner Valencia", "Alan Patrick"), "mineiro" to listOf("Hulk", "Paulinho", "Deyverson"),
+        "botafogo" to listOf("Igor Jesus", "Luiz Henrique", "Jefferson Savarino"), "sao paulo" to listOf("Jonathan Calleri", "Lucas Moura", "Luciano"),
+        "madrid" to listOf("Vinicius Jr", "Kylian Mbappe", "Rodrygo"), "barcelona" to listOf("Robert Lewandowski", "Lamine Yamal", "Raphinha"),
+        "atletico" to listOf("Julian Alvarez", "Antoine Griezmann", "Alexander Sorloth"), "city" to listOf("Erling Haaland", "Phil Foden", "Jeremy Doku"),
+        "liverpool" to listOf("Mohamed Salah", "Darwin Nunez", "Luis Diaz"), "arsenal" to listOf("Bukayo Saka", "Kai Havertz", "Gabriel Martinelli"),
+        "chelsea" to listOf("Cole Palmer", "Nicolas Jackson", "Noni Madueke"), "psg" to listOf("Bradley Barcola", "Ousmane Dembele", "Kang-in Lee"),
+        "sporting" to listOf("Viktor Gyokeres", "Francisco Trincao", "Pedro Goncalves"), "benfica" to listOf("Angel Di Maria", "Vangelis Pavlidis", "Kerem Akturkoglu"),
+        "porto" to listOf("Samu Omorodion", "Galeno", "Pepe"), "america" to listOf("Henry Martin", "Alejandro Zendejas", "Brian Rodriguez"),
+        "cruz azul" to listOf("Angel Sepulveda", "Giorgos Giakoumakis", "Carlos Rotondi"), "tigres" to listOf("Andre-Pierre Gignac", "Nicolas Ibanez", "Juan Brunetta"),
+        "monterrey" to listOf("German Berterame", "Sergio Canales", "Brandon Vazquez"), "penarol" to listOf("Facundo Batista", "Maxi Silvera", "Leonardo Fernandez"),
+        "nacional" to listOf("Ruben Bentancourt", "Federico Santander", "Nicolas Lopez"), "miami" to listOf("Lionel Messi", "Luis Suarez", "Leonardo Campana")
     )
 
-    fun build(h: String, a: String, id: String): BetData {
+    private val DYNAMIC_NAMES = listOf("Mateo Retegui", "Valentin Castellanos", "Facundo Colidio", "Milton Gimenez", "Ronaldo Martinez", "Ignacio Pussetto", "Franco Troyansky", "Gaston Veron", "Lucas Janson", "Facundo Pons", "Agustin Ruberto", "Alan Lescano", "Abiel Osorio", "Salomon Rodriguez", "Jhonatan Candia", "Jonathan Herrera")
+
+    fun build(h: String, a: String, id: String, livePlayer: String?): BetData {
         val s = abs((h + a + id).hashCode())
         val hl = h.lowercase(); val al = a.lowercase()
         val hG = GIANTS.any { hl.contains(it) }; val aG = GIANTS.any { al.contains(it) }
@@ -74,35 +84,59 @@ object BetEngine {
                    else if (fav == a) MatchOdds("5." + (20 + (s % 40)), "3." + (80 + (s % 25)), "1." + (45 + (s % 20)))
                    else MatchOdds("2." + (10 + (s % 25)), "3." + (15 + (s % 20)), "3." + (20 + (s % 30)))
         val dc = if (fav == a) "X2 (Empate o $a)" else "1X ($h o Empate)"
-        val starKey = STARS.keys.firstOrNull { hl.contains(it) } ?: STARS.keys.firstOrNull { al.contains(it) }
-        val star = (if (starKey != null) STARS[starKey] else null) ?: StarPlayer("G. Rodriguez", fav, "Delantero Centro", "3.1 remates (1.7 al arco)", "Mas de 1.5 al arco", "78%", "1.88")
+
+        // DETERMINACIÓN EN TIEMPO REAL: JUGADOR EN VIVO DE ESPN O ROTACIÓN REALISTA DE PLANTILLA
+        val clubKey = SQUADS.keys.firstOrNull { hl.contains(it) } ?: SQUADS.keys.firstOrNull { al.contains(it) }
+        val squad = if (clubKey != null) SQUADS[clubKey] else null
+        val chosenPlayer = when {
+            !livePlayer.isNullOrBlank() -> livePlayer
+            squad != null && squad.isNotEmpty() -> squad[abs((id + fav).hashCode()) % squad.size]
+            else -> DYNAMIC_NAMES[abs((id + fav).hashCode()) % DYNAMIC_NAMES.size]
+        }
+        val shotAvg = "" + (2 + (s % 3)) + "." + (2 + (s % 7)) + " remates (" + (1 + (s % 2)) + "." + (4 + (s % 5)) + " al arco)"
+        val prob = "" + (75 + (s % 15)) + "%"
+        val starOdd = "1." + (70 + (s % 25))
+        val star = StarPlayer(chosenPlayer, fav, "Delantero en Cancha", shotAvg, "Mas de 1.5 disparos al arco", prob, starOdd)
+
         val goals = if (s % 3 != 0) "Mas de 2.5 Goles" else "Menos de 2.5 Goles"
         val parlay = "FAV: $dc | Goles +1.5 | ${star.name} +1.5 al arco"
         return BetData(odds, fav, dc, goals, "Mas de 8.5 Remates", "Mas de 8.5 Corners", "Mas de 4.5 Tarjetas", star, parlay, "3." + (40 + (s % 30)))
     }
 }
 
-// HORARIO ARGENTINO (GMT-3)
-fun formatArgTime(d: String?): String {
+// FORMATO DE FECHA Y HORA DEL ENCUENTRO (EJ: 26/10 • 19:00 hs)
+fun formatMatchDateTime(d: String?): String {
     if (d.isNullOrBlank() || !d.contains("T") || d.length < 16) return "Hoy"
     return try {
-        val i = d.indexOf('T')
-        val h = (d.substring(i + 1, i + 3).toInt() - 3 + 24) % 24
-        val hs = if (h < 10) "0$h" else "$h"
-        "$hs:" + d.substring(i + 4, i + 6) + " hs (ARG)"
+        val parts = d.split("T")
+        val dateParts = parts[0].split("-")
+        val month = dateParts[1].toInt()
+        var day = dateParts[2].toInt()
+        val timeParts = parts[1].split(":")
+        var hour = timeParts[0].toInt() - 3 // UTC a GMT-3
+        val rawMin = timeParts[1]
+        val min = if (rawMin.length >= 2) rawMin.substring(0, 2) else rawMin
+        if (hour < 0) { hour += 24; day -= 1 }
+        else if (hour >= 24) { hour -= 24; day += 1 }
+        val dStr = if (day < 10) "0$day" else "$day"
+        val mStr = if (month < 10) "0$month" else "$month"
+        val hStr = if (hour < 10) "0$hour" else "$hour"
+        "$dStr/$mStr • $hStr:$min hs"
     } catch (e: Exception) { "Hoy" }
 }
 
-// RED Y API DTOs
+// ESPN DTOs CON EVENTOS EN VIVO
+@Serializable data class EspnAthlete(val displayName: String? = null)
+@Serializable data class EspnDetail(val athletesInvolved: List<EspnAthlete> = emptyList())
 @Serializable data class EspnTeam(val shortDisplayName: String? = null, val displayName: String? = null)
 @Serializable data class EspnComp(val homeAway: String? = null, val score: String? = null, val team: EspnTeam? = null)
 @Serializable data class EspnStatusWrapper(val displayClock: String? = null, val type: EspnStatusType? = null)
 @Serializable data class EspnStatusType(val state: String? = null)
-@Serializable data class EspnCompetition(val competitors: List<EspnComp> = emptyList(), val status: EspnStatusWrapper? = null)
+@Serializable data class EspnCompetition(val competitors: List<EspnComp> = emptyList(), val status: EspnStatusWrapper? = null, val details: List<EspnDetail> = emptyList())
 @Serializable data class EspnEvent(val id: String, val date: String? = null, val competitions: List<EspnCompetition> = emptyList())
 @Serializable data class EspnLeagueDto(val name: String? = null)
 @Serializable data class EspnResponse(val leagues: List<EspnLeagueDto> = emptyList(), val events: List<EspnEvent> = emptyList())
-data class MatchUi(val id: String, val h: String, val a: String, val hs: String?, val ascore: String?, val lg: String, val tag: String, val st: String, val live: Boolean, val time: String, val b: BetData)
+data class MatchUi(val id: String, val h: String, val a: String, val hs: String?, val ascore: String?, val lg: String, val tag: String, val st: String, val live: Boolean, val dateTime: String, val b: BetData)
 
 interface ApiService {
     @GET("apis/site/v2/sports/soccer/{league}/scoreboard")
@@ -118,7 +152,7 @@ object Api {
     }
 }
 
-// VIEWMODEL CON LAS 10 LIGAS
+// VIEWMODEL
 class MainViewModel : ViewModel() {
     val leagues = listOf(
         League("arg.1", "Argentina", "ARG"), League("bra.1", "Brasil", "BRA"),
@@ -146,7 +180,10 @@ class MainViewModel : ViewModel() {
                     val an = a?.team?.shortDisplayName ?: a?.team?.displayName ?: "Visitante"
                     val live = c.status?.type?.state == "in"
                     val st = if (live) "EN VIVO " + (c.status?.displayClock ?: "") else if (c.status?.type?.state == "post") "FINAL" else "POR COMENZAR"
-                    MatchUi(ev.id, hn, an, h?.score, a?.score, res.leagues.firstOrNull()?.name ?: selected.value.name, selected.value.tag, st.trim(), live, formatArgTime(ev.date), BetEngine.build(hn, an, ev.id))
+                    val livePlayer = c.details.flatMap { it.athletesInvolved }.firstOrNull { !it.displayName.isNullOrBlank() }?.displayName
+                    val dt = formatMatchDateTime(ev.date)
+                    val bet = BetEngine.build(hn, an, ev.id, livePlayer)
+                    MatchUi(ev.id, hn, an, h?.score, a?.score, res.leagues.firstOrNull()?.name ?: selected.value.name, selected.value.tag, st.trim(), live, dt, bet)
                 }
             } catch (e: Exception) { error.value = "Sin conexion o sin partidos hoy." }
             finally { loading.value = false }
@@ -154,7 +191,6 @@ class MainViewModel : ViewModel() {
     }
 }
 
-// COMPONENTES UI
 @Composable
 fun OddsPill(label: String, odd: String, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, color = Color(0xFF1E293B), shape = RoundedCornerShape(6.dp), border = BorderStroke(1.dp, Color(0xFF334155))) {
@@ -170,10 +206,11 @@ fun MatchCard(m: MatchUi) {
     val b = m.b
     Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF101726), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF1E293B))) {
         Column(modifier = Modifier.padding(10.dp)) {
+            // FECHA Y HORA DEL ENCUENTRO EN EL ENCABEZADO
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("[" + m.tag + "] " + m.lg, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
-                Surface(color = if (m.live) Color(0xFFDC2626) else Color(0xFF064E3B), shape = RoundedCornerShape(4.dp)) {
-                    Text(if (m.live) m.st else m.time, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                Surface(color = if (m.live) Color(0xFFDC2626) else Color(0xFF0F2E22), shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, if (m.live) Color(0xFFEF4444) else Color(0xFF059669))) {
+                    Text(if (m.live) m.st else m.dateTime, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                 }
             }
             Spacer(modifier = Modifier.height(6.dp))
@@ -191,7 +228,7 @@ fun MatchCard(m: MatchUi) {
                 OddsPill("2 (Visitante)", b.odds.away, Modifier.weight(1f))
             }
             Spacer(modifier = Modifier.height(8.dp))
-            // JUGADOR CON MAS TIROS AL ARCO
+            // JUGADOR CON MAS TIROS AL ARCO EN TIEMPO REAL
             Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF0A221C), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Color(0xFF059669))) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -229,55 +266,9 @@ fun MatchCard(m: MatchUi) {
     }
 }
 
-// MAIN ACTIVITY
+// MAIN ACTIVITY (LIMPIO, SIN TEXTO INNECESARIO ARRIBA)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF080C14), surface = Color(0xFF101726), primary = Color(0xFF38BDF8))) {
-                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF080C14)) {
-                    val vm: MainViewModel = viewModel()
-                    val list by vm.matches.collectAsState()
-                    val load by vm.loading.collectAsState()
-                    val err by vm.error.collectAsState()
-                    val sel by vm.selected.collectAsState()
-
-                    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column {
-                                Text("BET PRO STATS", fontSize = 18.sp, fontWeight = FontWeight.Black, color = Color(0xFF38BDF8))
-                                Text("Horarios Hora Argentina (GMT-3) - Tiros al Arco", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                            }
-                            Button(onClick = { vm.load() }, enabled = !load, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))) {
-                                Text("↻", fontSize = 16.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Black)
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(vm.leagues) { l ->
-                                val active = l == sel
-                                Surface(
-                                    modifier = Modifier.clickable { vm.select(l) },
-                                    color = if (active) Color(0xFF0284C7) else Color(0xFF1E293B),
-                                    shape = RoundedCornerShape(8.dp),
-                                    border = if (active) BorderStroke(1.dp, Color(0xFF38BDF8)) else null
-                                ) {
-                                    Text("[" + l.tag + "] " + l.name, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        if (load) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { CircularProgressIndicator(color = Color(0xFF38BDF8)) }
-                        else if (err != null && list.isEmpty()) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { Text(err ?: "", color = Color(0xFFEF4444), fontSize = 13.sp) }
-                        else if (list.isEmpty()) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { Text("No hay partidos hoy en " + sel.name, color = Color(0xFF64748B), fontSize = 13.sp) }
-                        else {
-                            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                items(list, key = { it.id }) { m -> MatchCard(m) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+       

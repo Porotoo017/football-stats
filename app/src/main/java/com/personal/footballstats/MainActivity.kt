@@ -44,36 +44,26 @@ data class League(val code: String, val name: String, val tag: String)
 object BetEngine {
     private val GIANTS = setOf("boca", "river", "racing", "independiente", "san lorenzo", "velez", "talleres", "estudiantes", "lanus", "huracan", "flamengo", "palmeiras", "mineiro", "botafogo", "sao paulo", "corinthians", "fluminense", "gremio", "internacional", "cruzeiro", "madrid", "barcelona", "atletico", "athletic", "sevilla", "betis", "villarreal", "city", "liverpool", "arsenal", "chelsea", "tottenham", "united", "psg", "marseille", "monaco", "sporting", "benfica", "porto", "america", "cruz azul", "tigres", "monterrey", "toluca", "penarol", "nacional", "miami")
 
-    // PLANTILLAS REALES DE ATACANTES (ROTACIÓN AUTOMÁTICA EN CADA ENCUENTRO)
     private val SQUADS = mapOf(
-        "boca" to listOf("Edinson Cavani", "Miguel Merentiel", "Exequiel Zeballos"), "river" to listOf("Miguel Borja", "Facundo Colidio", "Pablo Solari"),
-        "racing" to listOf("A. Maravilla Martinez", "Maximiliano Salas", "Roger Martinez"), "independiente" to listOf("Gabriel Avalos", "Santiago Montiel", "Matias Gimenez"),
-        "san lorenzo" to listOf("Alexis Cuello", "Iker Muniain", "Nahuel Bustos"), "velez" to listOf("Braian Romero", "Claudio Aquino", "Thiago Fernandez"),
-        "talleres" to listOf("Federico Girotti", "Valentin Depietri", "Ruben Botta"), "estudiantes" to listOf("Guido Carrillo", "Luciano Gimenez", "Tiago Palacios"),
-        "lanus" to listOf("Walter Bou", "Marcelino Moreno", "Eduardo Salvio"), "huracan" to listOf("Rodrigo Echeverria", "Eric Ramirez", "Ramon Abila"),
-        "belgrano" to listOf("Franco Jara", "Bryan Reyna", "Nicolas Fernandez"), "instituto" to listOf("Damian Puebla", "Facundo Suarez", "Gaston Lodico"),
-        "riestra" to listOf("Jonathan Herrera", "Antony Alonso", "Nicolas Benegas"), "central" to listOf("Marco Ruben", "Ignacio Malcorra", "Enzo Copetti"),
-        "newell" to listOf("Juan I. Ramirez", "Ever Banega", "Mateo Silvetti"), "gimnasia" to listOf("Rodrigo Castillo", "Matias Abaldo", "Lucas Castro"),
-        "platense" to listOf("Mateo Pellegrino", "Ronaldo Martinez", "Guido Mainero"), "banfield" to listOf("Bruno Sepulveda", "Ignacio Rodriguez", "Geronimo Rivera"),
-        "tigre" to listOf("Florian Monzon", "Armoa Blas", "Gonzalo Maroni"), "union" to listOf("Nicolas Orsini", "Lucas Gamba", "Adrian Balboa"),
-        "godoy" to listOf("Salomon Rodriguez", "Santino Andino", "Daniel Barrea"), "flamengo" to listOf("Pedro Guilherme", "Gabriel Barbosa", "Bruno Henrique"),
-        "palmeiras" to listOf("Estevao Willian", "Flaco Lopez", "Raphael Veiga"), "corinthians" to listOf("Memphis Depay", "Yuri Alberto", "Rodrigo Garro"),
-        "fluminense" to listOf("German Cano", "Kaua Elias", "Jhon Arias"), "vasco" to listOf("Pablo Vegetti", "Dimitri Payet", "Rayan"),
-        "cruzeiro" to listOf("Kaio Jorge", "Matheus Pereira", "Lautaro Diaz"), "gremio" to listOf("Martin Braithwaite", "Diego Costa", "Yeferson Soteldo"),
-        "internacional" to listOf("Rafael Borre", "Enner Valencia", "Alan Patrick"), "mineiro" to listOf("Hulk", "Paulinho", "Deyverson"),
-        "botafogo" to listOf("Igor Jesus", "Luiz Henrique", "Jefferson Savarino"), "sao paulo" to listOf("Jonathan Calleri", "Lucas Moura", "Luciano"),
-        "madrid" to listOf("Vinicius Jr", "Kylian Mbappe", "Rodrygo"), "barcelona" to listOf("Robert Lewandowski", "Lamine Yamal", "Raphinha"),
-        "atletico" to listOf("Julian Alvarez", "Antoine Griezmann", "Alexander Sorloth"), "city" to listOf("Erling Haaland", "Phil Foden", "Jeremy Doku"),
-        "liverpool" to listOf("Mohamed Salah", "Darwin Nunez", "Luis Diaz"), "arsenal" to listOf("Bukayo Saka", "Kai Havertz", "Gabriel Martinelli"),
-        "chelsea" to listOf("Cole Palmer", "Nicolas Jackson", "Noni Madueke"), "psg" to listOf("Bradley Barcola", "Ousmane Dembele", "Kang-in Lee"),
-        "sporting" to listOf("Viktor Gyokeres", "Francisco Trincao", "Pedro Goncalves"), "benfica" to listOf("Angel Di Maria", "Vangelis Pavlidis", "Kerem Akturkoglu"),
-        "porto" to listOf("Samu Omorodion", "Galeno", "Pepe"), "america" to listOf("Henry Martin", "Alejandro Zendejas", "Brian Rodriguez"),
-        "cruz azul" to listOf("Angel Sepulveda", "Giorgos Giakoumakis", "Carlos Rotondi"), "tigres" to listOf("Andre-Pierre Gignac", "Nicolas Ibanez", "Juan Brunetta"),
-        "monterrey" to listOf("German Berterame", "Sergio Canales", "Brandon Vazquez"), "penarol" to listOf("Facundo Batista", "Maxi Silvera", "Leonardo Fernandez"),
-        "nacional" to listOf("Ruben Bentancourt", "Federico Santander", "Nicolas Lopez"), "miami" to listOf("Lionel Messi", "Luis Suarez", "Leonardo Campana")
+        "boca" to listOf("Edinson Cavani", "Miguel Merentiel"), "river" to listOf("Miguel Borja", "Facundo Colidio"), "racing" to listOf("A. Maravilla Martinez", "Maximiliano Salas"),
+        "independiente" to listOf("Gabriel Avalos", "Santiago Montiel"), "san lorenzo" to listOf("Alexis Cuello", "Iker Muniain"), "velez" to listOf("Braian Romero", "Claudio Aquino"),
+        "talleres" to listOf("Federico Girotti", "Ruben Botta"), "estudiantes" to listOf("Guido Carrillo", "Tiago Palacios"), "lanus" to listOf("Walter Bou", "Marcelino Moreno"),
+        "huracan" to listOf("Rodrigo Echeverria", "Eric Ramirez"), "belgrano" to listOf("Franco Jara", "Bryan Reyna"), "instituto" to listOf("Damian Puebla", "Facundo Suarez"),
+        "riestra" to listOf("Jonathan Herrera", "Antony Alonso"), "central" to listOf("Marco Ruben", "Ignacio Malcorra"), "newell" to listOf("Juan I. Ramirez", "Ever Banega"),
+        "gimnasia" to listOf("Rodrigo Castillo", "Matias Abaldo"), "platense" to listOf("Mateo Pellegrino", "Ronaldo Martinez"), "banfield" to listOf("Bruno Sepulveda", "Geronimo Rivera"),
+        "tigre" to listOf("Florian Monzon", "Armoa Blas"), "union" to listOf("Nicolas Orsini", "Lucas Gamba"), "flamengo" to listOf("Pedro Guilherme", "Gabriel Barbosa"),
+        "palmeiras" to listOf("Estevao Willian", "Flaco Lopez"), "corinthians" to listOf("Memphis Depay", "Yuri Alberto"), "fluminense" to listOf("German Cano", "Jhon Arias"),
+        "vasco" to listOf("Pablo Vegetti", "Dimitri Payet"), "cruzeiro" to listOf("Kaio Jorge", "Matheus Pereira"), "gremio" to listOf("Martin Braithwaite", "Diego Costa"),
+        "internacional" to listOf("Rafael Borre", "Enner Valencia"), "mineiro" to listOf("Hulk", "Paulinho"), "botafogo" to listOf("Igor Jesus", "Luiz Henrique"),
+        "sao paulo" to listOf("Jonathan Calleri", "Lucas Moura"), "madrid" to listOf("Vinicius Jr", "Kylian Mbappe"), "barcelona" to listOf("Robert Lewandowski", "Lamine Yamal"),
+        "atletico" to listOf("Julian Alvarez", "Antoine Griezmann"), "city" to listOf("Erling Haaland", "Phil Foden"), "liverpool" to listOf("Mohamed Salah", "Darwin Nunez"),
+        "arsenal" to listOf("Bukayo Saka", "Kai Havertz"), "chelsea" to listOf("Cole Palmer", "Nicolas Jackson"), "psg" to listOf("Bradley Barcola", "Ousmane Dembele"),
+        "sporting" to listOf("Viktor Gyokeres", "Trincao"), "benfica" to listOf("Angel Di Maria", "Pavlidis"), "porto" to listOf("Samu Omorodion", "Galeno"),
+        "america" to listOf("Henry Martin", "Zendejas"), "cruz azul" to listOf("Angel Sepulveda", "Giakoumakis"), "tigres" to listOf("Andre-Pierre Gignac", "Brunetta"),
+        "monterrey" to listOf("German Berterame", "Canales"), "penarol" to listOf("Facundo Batista", "Maxi Silvera"), "nacional" to listOf("Ruben Bentancourt", "Santander"), "miami" to listOf("Lionel Messi", "Luis Suarez")
     )
 
-    private val DYNAMIC_NAMES = listOf("Mateo Retegui", "Valentin Castellanos", "Facundo Colidio", "Milton Gimenez", "Ronaldo Martinez", "Ignacio Pussetto", "Franco Troyansky", "Gaston Veron", "Lucas Janson", "Facundo Pons", "Agustin Ruberto", "Alan Lescano", "Abiel Osorio", "Salomon Rodriguez", "Jhonatan Candia", "Jonathan Herrera")
+    private val DYNAMIC = listOf("Mateo Retegui", "Valentin Castellanos", "Facundo Colidio", "Milton Gimenez", "Ronaldo Martinez", "Ignacio Pussetto", "Franco Troyansky", "Gaston Veron", "Lucas Janson", "Facundo Pons", "Agustin Ruberto", "Alan Lescano", "Abiel Osorio", "Salomon Rodriguez", "Jhonatan Candia", "Jonathan Herrera")
 
     fun build(h: String, a: String, id: String, livePlayer: String?): BetData {
         val s = abs((h + a + id).hashCode())
@@ -85,47 +75,35 @@ object BetEngine {
                    else MatchOdds("2." + (10 + (s % 25)), "3." + (15 + (s % 20)), "3." + (20 + (s % 30)))
         val dc = if (fav == a) "X2 (Empate o $a)" else "1X ($h o Empate)"
 
-        // DETERMINACIÓN EN TIEMPO REAL: JUGADOR EN VIVO DE ESPN O ROTACIÓN REALISTA DE PLANTILLA
         val clubKey = SQUADS.keys.firstOrNull { hl.contains(it) } ?: SQUADS.keys.firstOrNull { al.contains(it) }
         val squad = if (clubKey != null) SQUADS[clubKey] else null
-        val chosenPlayer = when {
+        val chosen = when {
             !livePlayer.isNullOrBlank() -> livePlayer
             squad != null && squad.isNotEmpty() -> squad[abs((id + fav).hashCode()) % squad.size]
-            else -> DYNAMIC_NAMES[abs((id + fav).hashCode()) % DYNAMIC_NAMES.size]
+            else -> DYNAMIC[abs((id + fav).hashCode()) % DYNAMIC.size]
         }
         val shotAvg = "" + (2 + (s % 3)) + "." + (2 + (s % 7)) + " remates (" + (1 + (s % 2)) + "." + (4 + (s % 5)) + " al arco)"
-        val prob = "" + (75 + (s % 15)) + "%"
-        val starOdd = "1." + (70 + (s % 25))
-        val star = StarPlayer(chosenPlayer, fav, "Delantero en Cancha", shotAvg, "Mas de 1.5 disparos al arco", prob, starOdd)
-
+        val star = StarPlayer(chosen, fav, "Delantero en Cancha", shotAvg, "Mas de 1.5 disparos al arco", "" + (75 + (s % 15)) + "%", "1." + (70 + (s % 25)))
         val goals = if (s % 3 != 0) "Mas de 2.5 Goles" else "Menos de 2.5 Goles"
         val parlay = "FAV: $dc | Goles +1.5 | ${star.name} +1.5 al arco"
         return BetData(odds, fav, dc, goals, "Mas de 8.5 Remates", "Mas de 8.5 Corners", "Mas de 4.5 Tarjetas", star, parlay, "3." + (40 + (s % 30)))
     }
 }
 
-// FORMATO DE FECHA Y HORA DEL ENCUENTRO (EJ: 26/10 • 19:00 hs)
 fun formatMatchDateTime(d: String?): String {
     if (d.isNullOrBlank() || !d.contains("T") || d.length < 16) return "Hoy"
     return try {
-        val parts = d.split("T")
-        val dateParts = parts[0].split("-")
-        val month = dateParts[1].toInt()
-        var day = dateParts[2].toInt()
-        val timeParts = parts[1].split(":")
-        var hour = timeParts[0].toInt() - 3 // UTC a GMT-3
-        val rawMin = timeParts[1]
-        val min = if (rawMin.length >= 2) rawMin.substring(0, 2) else rawMin
-        if (hour < 0) { hour += 24; day -= 1 }
-        else if (hour >= 24) { hour -= 24; day += 1 }
+        val dp = d.substring(0, d.indexOf('T')).split("-")
+        var day = dp[2].toInt(); val m = dp[1]
+        val tp = d.substring(d.indexOf('T') + 1, d.indexOf('T') + 6).split(":")
+        var h = tp[0].toInt() - 3
+        if (h < 0) { h += 24; day -= 1 } else if (h >= 24) { h -= 24; day += 1 }
         val dStr = if (day < 10) "0$day" else "$day"
-        val mStr = if (month < 10) "0$month" else "$month"
-        val hStr = if (hour < 10) "0$hour" else "$hour"
-        "$dStr/$mStr • $hStr:$min hs"
+        val hStr = if (h < 10) "0$h" else "$h"
+        "$dStr/$m • $hStr:${tp[1]} hs"
     } catch (e: Exception) { "Hoy" }
 }
 
-// ESPN DTOs CON EVENTOS EN VIVO
 @Serializable data class EspnAthlete(val displayName: String? = null)
 @Serializable data class EspnDetail(val athletesInvolved: List<EspnAthlete> = emptyList())
 @Serializable data class EspnTeam(val shortDisplayName: String? = null, val displayName: String? = null)
@@ -152,7 +130,6 @@ object Api {
     }
 }
 
-// VIEWMODEL
 class MainViewModel : ViewModel() {
     val leagues = listOf(
         League("arg.1", "Argentina", "ARG"), League("bra.1", "Brasil", "BRA"),
@@ -206,7 +183,6 @@ fun MatchCard(m: MatchUi) {
     val b = m.b
     Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF101726), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF1E293B))) {
         Column(modifier = Modifier.padding(10.dp)) {
-            // FECHA Y HORA DEL ENCUENTRO EN EL ENCABEZADO
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("[" + m.tag + "] " + m.lg, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
                 Surface(color = if (m.live) Color(0xFFDC2626) else Color(0xFF0F2E22), shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, if (m.live) Color(0xFFEF4444) else Color(0xFF059669))) {
@@ -228,7 +204,6 @@ fun MatchCard(m: MatchUi) {
                 OddsPill("2 (Visitante)", b.odds.away, Modifier.weight(1f))
             }
             Spacer(modifier = Modifier.height(8.dp))
-            // JUGADOR CON MAS TIROS AL ARCO EN TIEMPO REAL
             Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF0A221C), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Color(0xFF059669))) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -266,9 +241,31 @@ fun MatchCard(m: MatchUi) {
     }
 }
 
-// MAIN ACTIVITY (LIMPIO, SIN TEXTO INNECESARIO ARRIBA)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-       
+            MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF080C14), surface = Color(0xFF101726), primary = Color(0xFF38BDF8))) {
+                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF080C14)) {
+                    val vm: MainViewModel = viewModel()
+                    val list by vm.matches.collectAsState()
+                    val load by vm.loading.collectAsState()
+                    val err by vm.error.collectAsState()
+                    val sel by vm.selected.collectAsState()
+
+                    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("BET PRO STATS", fontSize = 20.sp, fontWeight = FontWeight.Black, color = Color(0xFF38BDF8))
+                            Button(onClick = { vm.load() }, enabled = !load, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))) {
+                                Text("↻", fontSize = 16.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Black)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(vm.leagues) { l ->
+                                val active = l == sel
+                                Surface(
+                                    modifier = Modifier.clickable { vm.select(l) },
+                                    color = if (active) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = if (active) B

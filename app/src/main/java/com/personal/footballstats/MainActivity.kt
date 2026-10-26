@@ -3,6 +3,7 @@ package com.personal.footballstats
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -94,27 +95,26 @@ object BetEngine {
         val aGiant = GIANTS.any { al.contains(it) }
 
         // LOGICA DE FAVORITO REAL: NUNCA SE PONE AL FAVORITO COMO MENOS FAVORITO
-        val (favTeam, odds, dc) = when {
-            hGiant && !aGiant -> {
-                val o = MatchOdds("1." + (35 + (s % 20)), "4." + (10 + (s % 30)), "6." + (50 + (s % 40)))
-                Triple(h, o, "1X ($h o Empate)")
-            }
-            !hGiant && aGiant -> {
-                val o = MatchOdds("5." + (20 + (s % 40)), "3." + (80 + (s % 25)), "1." + (45 + (s % 20)))
-                Triple(a, o, "X2 (Empate o $a)")
-            }
-            else -> {
-                val o = MatchOdds("2." + (10 + (s % 25)), "3." + (15 + (s % 20)), "3." + (20 + (s % 30)))
-                Triple(h, o, "1X ($h o Empate)")
-            }
+        val favTeam: String
+        val odds: MatchOdds
+        val dc: String
+        if (hGiant && !aGiant) {
+            favTeam = h
+            odds = MatchOdds("1." + (35 + (s % 20)), "4." + (10 + (s % 30)), "6." + (50 + (s % 40)))
+            dc = "1X ($h o Empate)"
+        } else if (!hGiant && aGiant) {
+            favTeam = a
+            odds = MatchOdds("5." + (20 + (s % 40)), "3." + (80 + (s % 25)), "1." + (45 + (s % 20)))
+            dc = "X2 (Empate o $a)"
+        } else {
+            favTeam = h
+            odds = MatchOdds("2." + (10 + (s % 25)), "3." + (15 + (s % 20)), "3." + (20 + (s % 30)))
+            dc = "1X ($h o Empate)"
         }
 
         // JUGADOR CON MAS TIROS AL ARCO
         val starKey = STARS.keys.firstOrNull { hl.contains(it) } ?: STARS.keys.firstOrNull { al.contains(it) }
-        val star = if (starKey != null) STARS[starKey]!! else {
-            val team = if (favTeam == h) h else a
-            StarPlayer("G. Rodriguez", team, "Delantero Centro", "3.0 remates p/p (1.6 al arco)", "Mas de 1.5 disparos al arco", "77%", "1.88")
-        }
+        val star = (if (starKey != null) STARS[starKey] else null) ?: StarPlayer("G. Rodriguez", favTeam, "Delantero Centro", "3.0 remates p/p (1.6 al arco)", "Mas de 1.5 disparos al arco", "77%", "1.88")
 
         val goals = if (s % 3 != 0) "Mas de 2.5 Goles" else "Menos de 2.5 Goles"
         val pPick = "FAVORITO: $dc | Goles +1.5 | ${star.name} +1.5 al arco"
@@ -237,7 +237,7 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.clickable { vm.select(l) },
                                     color = if (active) Color(0xFF0284C7) else Color(0xFF1E293B),
                                     shape = RoundedCornerShape(8.dp),
-                                    border = if (active) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8)) else null
+                                    border = if (active) BorderStroke(1.dp, Color(0xFF38BDF8)) else null
                                 ) {
                                     Text("[" + l.tag + "] " + l.name, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
@@ -266,7 +266,7 @@ fun MatchCard(m: MatchUi) {
         modifier = Modifier.fillMaxWidth(),
         color = Color(0xFF101726),
         shape = RoundedCornerShape(14.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1E293B))
+        border = BorderStroke(1.dp, Color(0xFF1E293B))
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             // ENCABEZADO CON HORA ARGENTINA DESTACADA
@@ -295,4 +295,5 @@ fun MatchCard(m: MatchUi) {
             Spacer(modifier = Modifier.height(10.dp))
 
             // TARJETA VERDE ESMERALDA: JUGADOR CON MAS TIROS AL ARCO (NOMBRE, APELLIDO, CLUB, POSICION Y DISPAROS)
-            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF0A221C), shape = RoundedCornerShape(10
+            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF0A221C), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Color(0xFF059669))) {
+   

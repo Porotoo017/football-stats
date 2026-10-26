@@ -12,7 +12,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,13 +37,11 @@ import retrofit2.http.Path
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
-// MODELOS Y ESTRUCTURAS
 data class StarPlayer(val name: String, val club: String, val role: String, val avgShots: String, val pick: String, val prob: String, val odds: String)
 data class MatchOdds(val home: String, val draw: String, val away: String)
 data class BetData(val odds: MatchOdds, val favorite: String, val dc: String, val goals: String, val shots: String, val corn: String, val card: String, val star: StarPlayer, val parlay: String, val parlayOdds: String)
 data class League(val code: String, val name: String, val tag: String)
 
-// MOTOR DE PRONÓSTICOS Y DISPAROS AL ARCO
 object BetEngine {
     private val GIANTS = setOf("boca", "river", "racing", "independiente", "san lorenzo", "velez", "flamengo", "palmeiras", "botafogo", "mineiro", "sao paulo", "madrid", "barcelona", "atletico", "city", "liverpool", "arsenal", "psg", "sporting", "benfica", "porto", "america", "monterrey", "tigres", "penarol", "nacional", "miami")
     private val STARS = mapOf(
@@ -55,16 +52,16 @@ object BetEngine {
         "san lorenzo" to StarPlayer("Alexis Cuello", "San Lorenzo", "Delantero", "2.7 remates (1.4 al arco)", "Mas de 1.5 disparos al arco", "74%", "1.95"),
         "velez" to StarPlayer("Braian Romero", "Velez Sarsfield", "Delantero Centro", "3.2 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "79%", "1.88"),
         "flamengo" to StarPlayer("Pedro Guilherme", "Flamengo", "Delantero Centro", "3.9 remates (2.4 al arco)", "Mas de 1.5 disparos al arco", "87%", "1.72"),
-        "palmeiras" to StarPlayer("Estevao Willian", "Palmeiras", "Extremo Derecho", "3.3 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "80%", "1.85"),
+        "palmeiras" to StarPlayer("Estevao Willian", "Palmeiras", "Extremo", "3.3 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "80%", "1.85"),
         "mineiro" to StarPlayer("Hulk", "Atletico Mineiro", "Delantero", "4.1 remates (2.2 al arco)", "Mas de 1.5 disparos al arco", "85%", "1.78"),
         "sao paulo" to StarPlayer("Jonathan Calleri", "Sao Paulo", "Delantero Centro", "3.0 remates (1.6 al arco)", "Mas de 1.5 disparos al arco", "78%", "1.88"),
-        "madrid" to StarPlayer("Vinicius Jr", "Real Madrid", "Extremo Izquierdo", "4.2 remates (2.5 al arco)", "Mas de 1.5 disparos al arco", "88%", "1.70"),
+        "madrid" to StarPlayer("Vinicius Jr", "Real Madrid", "Extremo", "4.2 remates (2.5 al arco)", "Mas de 1.5 disparos al arco", "88%", "1.70"),
         "barcelona" to StarPlayer("Robert Lewandowski", "FC Barcelona", "Delantero Centro", "4.0 remates (2.4 al arco)", "Mas de 1.5 disparos al arco", "87%", "1.74"),
-        "atletico" to StarPlayer("Julian Alvarez", "Atletico Madrid", "Delantero Centro", "3.5 remates (2.0 al arco)", "Mas de 1.5 disparos al arco", "82%", "1.82"),
+        "atletico" to StarPlayer("Julian Alvarez", "Atletico Madrid", "Delantero", "3.5 remates (2.0 al arco)", "Mas de 1.5 disparos al arco", "82%", "1.82"),
         "city" to StarPlayer("Erling Haaland", "Manchester City", "Delantero Centro", "4.5 remates (2.8 al arco)", "Mas de 1.5 disparos al arco", "91%", "1.60"),
-        "liverpool" to StarPlayer("Mohamed Salah", "Liverpool", "Extremo Derecho", "3.9 remates (2.2 al arco)", "Mas de 1.5 disparos al arco", "86%", "1.76"),
-        "arsenal" to StarPlayer("Bukayo Saka", "Arsenal", "Extremo Derecho", "3.4 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "81%", "1.84"),
-        "psg" to StarPlayer("Bradley Barcola", "Paris SG", "Extremo Izquierdo", "3.3 remates (1.9 al arco)", "Mas de 1.5 disparos al arco", "80%", "1.85"),
+        "liverpool" to StarPlayer("Mohamed Salah", "Liverpool", "Extremo", "3.9 remates (2.2 al arco)", "Mas de 1.5 disparos al arco", "86%", "1.76"),
+        "arsenal" to StarPlayer("Bukayo Saka", "Arsenal", "Extremo", "3.4 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "81%", "1.84"),
+        "psg" to StarPlayer("Bradley Barcola", "Paris SG", "Extremo", "3.3 remates (1.9 al arco)", "Mas de 1.5 disparos al arco", "80%", "1.85"),
         "sporting" to StarPlayer("Viktor Gyokeres", "Sporting CP", "Delantero Centro", "4.4 remates (2.7 al arco)", "Mas de 1.5 disparos al arco", "90%", "1.65"),
         "benfica" to StarPlayer("Angel Di Maria", "Benfica", "Extremo", "3.2 remates (1.7 al arco)", "Mas de 1.5 disparos al arco", "79%", "1.88"),
         "america" to StarPlayer("Henry Martin", "Club America", "Delantero Centro", "3.3 remates (1.8 al arco)", "Mas de 1.5 disparos al arco", "80%", "1.85"),
@@ -73,7 +70,6 @@ object BetEngine {
         "nacional" to StarPlayer("Ruben Bentancourt", "Nacional", "Delantero Centro", "3.0 remates (1.7 al arco)", "Mas de 1.5 disparos al arco", "78%", "1.88"),
         "miami" to StarPlayer("Lionel Messi", "Inter Miami", "Mediapunta", "4.3 remates (2.6 al arco)", "Mas de 1.5 disparos al arco", "92%", "1.62")
     )
-
     fun build(h: String, a: String, id: String): BetData {
         val s = abs((h + a + id).hashCode())
         val hl = h.lowercase(); val al = a.lowercase()
@@ -91,7 +87,6 @@ object BetEngine {
     }
 }
 
-// HORARIO ARGENTINO (GMT-3)
 fun formatArgTime(d: String?): String {
     if (d.isNullOrBlank() || !d.contains("T") || d.length < 16) return "Hoy"
     return try {
@@ -102,7 +97,6 @@ fun formatArgTime(d: String?): String {
     } catch (e: Exception) { "Hoy" }
 }
 
-// ESPN DTOs
 @Serializable data class EspnTeam(val shortDisplayName: String? = null, val displayName: String? = null)
 @Serializable data class EspnComp(val homeAway: String? = null, val score: String? = null, val team: EspnTeam? = null)
 @Serializable data class EspnStatusWrapper(val displayClock: String? = null, val type: EspnStatusType? = null)
@@ -127,7 +121,6 @@ object Api {
     }
 }
 
-// VIEWMODEL
 class MainViewModel : ViewModel() {
     val leagues = listOf(
         League("arg.1", "Argentina", "ARG"), League("bra.1", "Brasil", "BRA"),
@@ -140,7 +133,6 @@ class MainViewModel : ViewModel() {
     val matches = MutableStateFlow<List<MatchUi>>(emptyList())
     val loading = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
-
     init { load() }
     fun select(l: League) { selected.value = l; load() }
     fun load() {
@@ -164,7 +156,6 @@ class MainViewModel : ViewModel() {
     }
 }
 
-// ODDS PILL
 @Composable
 fun OddsPill(label: String, odd: String, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, color = Color(0xFF1E293B), shape = RoundedCornerShape(6.dp), border = BorderStroke(1.dp, Color(0xFF334155))) {
@@ -175,7 +166,6 @@ fun OddsPill(label: String, odd: String, modifier: Modifier = Modifier) {
     }
 }
 
-// TARJETA DE PARTIDO
 @Composable
 fun MatchCard(m: MatchUi) {
     val b = m.b
@@ -206,11 +196,11 @@ fun MatchCard(m: MatchUi) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Star, null, tint = Color(0xFFF59E0B), modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("★", fontSize = 14.sp, color = Color(0xFFF59E0B))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text("MAS TIROS AL ARCO", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF34D399))
                         }
-                        Surface(color = Color(0xFF10B981).copy(alpha = 0.25f), shape = RoundedCornerShape(4.dp)) {
+                        Surface(color = Color(0x4010B981), shape = RoundedCornerShape(4.dp)) {
                             Text("Cuota " + b.star.odds, fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF6EE7B7), modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
                         }
                     }
@@ -243,7 +233,6 @@ fun MatchCard(m: MatchUi) {
     }
 }
 
-// MAIN ACTIVITY
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -274,4 +263,9 @@ class MainActivity : ComponentActivity() {
                                     shape = RoundedCornerShape(8.dp),
                                     border = if (active) BorderStroke(1.dp, Color(0xFF38BDF8)) else null
                                 ) {
-                                    Text("[" + l.tag + "] " + l.name, modi
+                                    Text("[" + l.tag + "] " + l.name, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        if (load) Box(modifier 

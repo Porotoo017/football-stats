@@ -259,4 +259,9 @@ class MainActivity : ComponentActivity() {
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("BET PRO STATS", fontSize = 18.sp, fontWeight = FontWeight.Black, color = Color.White)
                                 Spacer(modifier = Modifier.width(6.dp))
-            
+            }
+                }
+            }
+        }
+    }
+        }

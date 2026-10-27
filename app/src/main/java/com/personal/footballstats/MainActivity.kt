@@ -55,8 +55,10 @@ object BetEngine {
 
     fun build(h: String, a: String, id: String, cardsStr: String): BetData {
         val s = abs((h + a + id).hashCode())
-        val hl = h.lowercase(); val al = a.lowercase()
-        val hG = GIANTS.any { hl.contains(it) }; val aG = GIANTS.any { al.contains(it) }
+        val hl = h.lowercase()
+        val al = a.lowercase()
+        val hG = GIANTS.any { hl.contains(it) }
+        val aG = GIANTS.any { al.contains(it) }
         val fav = if (hG && !aG) h else if (!hG && aG) a else h
         val odds = if (fav == h && hG && !aG) MatchOdds("1." + (35 + (s % 20)), "4." + (10 + (s % 30)), "6." + (50 + (s % 40)))
                    else if (fav == a) MatchOdds("5." + (20 + (s % 40)), "3." + (80 + (s % 25)), "1." + (45 + (s % 20)))
@@ -85,7 +87,7 @@ fun formatMatchDateTime(d: String?): String {
         if (h < 0) { h += 24; day -= 1 } else if (h >= 24) { h -= 24; day += 1 }
         val dStr = if (day < 10) "0$day" else "$day"; val hStr = if (h < 10) "0$h" else "$h"
         "$dStr/$m • $hStr:${tp[1]} hs"
-    } catch (_: Exception) { "Hoy" }
+    } catch (e: Exception) { "Hoy" }
 }
 
 @Serializable data class EspnTeam(val shortDisplayName: String? = null, val displayName: String? = null)
@@ -190,15 +192,23 @@ fun MatchCard(m: MatchUi) {
             Spacer(modifier = Modifier.height(6.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Surface(modifier = Modifier.weight(1f), color = Color(0xFF161A24), shape = RoundedCornerShape(6.dp), border = BorderStroke(1.dp, Color(0xFF232838))) {
-                    Column(modifier = Modifier.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text("TARJETAS REALES", fontSize = 8.sp, color = AmberOdds, fontWeight = FontWeight.Bold); Text(b.cardsText, fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold) }
+                    Column(modifier = Modifier.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("TARJETAS REALES", fontSize = 8.sp, color = AmberOdds, fontWeight = FontWeight.Bold)
+                        Text(b.cardsText, fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
                 }
                 Surface(modifier = Modifier.weight(1f), color = Color(0xFF161A24), shape = RoundedCornerShape(6.dp), border = BorderStroke(1.dp, Color(0xFF232838))) {
-                    Column(modifier = Modifier.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text("FAVORITO", fontSize = 8.sp, color = CyanElectric, fontWeight = FontWeight.Bold); Text(b.favorite, fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1) }
+                    Column(modifier = Modifier.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("FAVORITO", fontSize = 8.sp, color = CyanElectric, fontWeight = FontWeight.Bold)
+                        Text(b.favorite, fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(6.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OddsPill("1 (Local)", b.odds.home, Modifier.weight(1f)); OddsPill("X (Empate)", b.odds.draw, Modifier.weight(1f)); OddsPill("2 (Visitante)", b.odds.away, Modifier.weight(1f))
+                OddsPill("1 (Local)", b.odds.home, Modifier.weight(1f))
+                OddsPill("X (Empate)", b.odds.draw, Modifier.weight(1f))
+                OddsPill("2 (Visitante)", b.odds.away, Modifier.weight(1f))
             }
             Spacer(modifier = Modifier.height(6.dp))
             Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF0D1E16), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, Color(0xFF13583C))) {
@@ -212,14 +222,18 @@ fun MatchCard(m: MatchUi) {
                     Text(b.star.name + " (" + b.star.club + ")", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color.White)
                     Text(b.star.avgShots + " • " + b.star.pick, fontSize = 9.sp, color = Color(0xFF94A3B8))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(b.star.pick, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFA7F3D0)); Text("Prob: " + b.star.prob, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = NeonLime)
+                        Text(b.star.pick, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFA7F3D0))
+                        Text("Prob: " + b.star.prob, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = NeonLime)
                     }
                 }
             }
             Spacer(modifier = Modifier.height(5.dp))
             Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF1F1A08), shape = RoundedCornerShape(6.dp), border = BorderStroke(1.dp, Color(0xFF854D0E))) {
                 Row(modifier = Modifier.padding(5.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column { Text("STAKAZO PARLAY (Cuota " + b.parlayOdds + ")", fontSize = 8.sp, fontWeight = FontWeight.Black, color = AmberOdds); Text(b.parlay, fontSize = 8.sp, color = Color(0xFFFEF08A)) }
+                    Column {
+                        Text("STAKAZO PARLAY (Cuota " + b.parlayOdds + ")", fontSize = 8.sp, fontWeight = FontWeight.Black, color = AmberOdds)
+                        Text(b.parlay, fontSize = 8.sp, color = Color(0xFFFEF08A))
+                    }
                 }
             }
         }
@@ -245,6 +259,4 @@ class MainActivity : ComponentActivity() {
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("BET PRO STATS", fontSize = 18.sp, fontWeight = FontWeight.Black, color = Color.White)
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("PRO", fontSize = 9.sp, fontWeight = FontWeight.Black, color = DarkBg, modifier = Modifier.background(CyanElectric, RoundedCornerShape(3.dp)).padding(horizontal = 4.dp, vertical = 1.dp))
-                            }
-                          
+            

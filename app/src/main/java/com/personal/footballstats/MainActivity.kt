@@ -23,6 +23,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -40,10 +41,8 @@ data class MatchOdds(val home: String, val draw: String, val away: String)
 data class BetData(val odds: MatchOdds, val favorite: String, val dc: String, val goals: String, val shots: String, val corn: String, val card: String, val star: StarPlayer, val parlay: String, val parlayOdds: String)
 data class League(val code: String, val name: String, val tag: String)
 
-// MOTOR DE APUESTAS Y JUGADORES EN TIEMPO REAL
 object BetEngine {
     private val GIANTS = setOf("boca", "river", "racing", "independiente", "san lorenzo", "velez", "talleres", "estudiantes", "lanus", "huracan", "flamengo", "palmeiras", "mineiro", "botafogo", "sao paulo", "corinthians", "fluminense", "gremio", "internacional", "cruzeiro", "madrid", "barcelona", "atletico", "athletic", "sevilla", "betis", "villarreal", "city", "liverpool", "arsenal", "chelsea", "tottenham", "united", "psg", "marseille", "monaco", "sporting", "benfica", "porto", "america", "cruz azul", "tigres", "monterrey", "toluca", "penarol", "nacional", "miami")
-
     private val SQUADS = mapOf(
         "boca" to listOf("Edinson Cavani", "Miguel Merentiel"), "river" to listOf("Miguel Borja", "Facundo Colidio"), "racing" to listOf("A. Maravilla Martinez", "Maximiliano Salas"),
         "independiente" to listOf("Gabriel Avalos", "Santiago Montiel"), "san lorenzo" to listOf("Alexis Cuello", "Iker Muniain"), "velez" to listOf("Braian Romero", "Claudio Aquino"),
@@ -62,10 +61,9 @@ object BetEngine {
         "america" to listOf("Henry Martin", "Zendejas"), "cruz azul" to listOf("Angel Sepulveda", "Giakoumakis"), "tigres" to listOf("Andre-Pierre Gignac", "Brunetta"),
         "monterrey" to listOf("German Berterame", "Canales"), "penarol" to listOf("Facundo Batista", "Maxi Silvera"), "nacional" to listOf("Ruben Bentancourt", "Santander"), "miami" to listOf("Lionel Messi", "Luis Suarez")
     )
-
     private val DYNAMIC = listOf("Mateo Retegui", "Valentin Castellanos", "Facundo Colidio", "Milton Gimenez", "Ronaldo Martinez", "Ignacio Pussetto", "Franco Troyansky", "Gaston Veron", "Lucas Janson", "Facundo Pons", "Agustin Ruberto", "Alan Lescano", "Abiel Osorio", "Salomon Rodriguez", "Jhonatan Candia", "Jonathan Herrera")
 
-    fun build(h: String, a: String, id: String, livePlayer: String?): BetData {
+    fun build(h: String, a: String, id: String): BetData {
         val s = abs((h + a + id).hashCode())
         val hl = h.lowercase(); val al = a.lowercase()
         val hG = GIANTS.any { hl.contains(it) }; val aG = GIANTS.any { al.contains(it) }
@@ -74,11 +72,9 @@ object BetEngine {
                    else if (fav == a) MatchOdds("5." + (20 + (s % 40)), "3." + (80 + (s % 25)), "1." + (45 + (s % 20)))
                    else MatchOdds("2." + (10 + (s % 25)), "3." + (15 + (s % 20)), "3." + (20 + (s % 30)))
         val dc = if (fav == a) "X2 (Empate o $a)" else "1X ($h o Empate)"
-
         val clubKey = SQUADS.keys.firstOrNull { hl.contains(it) } ?: SQUADS.keys.firstOrNull { al.contains(it) }
         val squad = if (clubKey != null) SQUADS[clubKey] else null
         val chosen = when {
-            !livePlayer.isNullOrBlank() -> livePlayer
             squad != null && squad.isNotEmpty() -> squad[abs((id + fav).hashCode()) % squad.size]
             else -> DYNAMIC[abs((id + fav).hashCode()) % DYNAMIC.size]
         }
@@ -104,76 +100,81 @@ fun formatMatchDateTime(d: String?): String {
     } catch (e: Exception) { "Hoy" }
 }
 
-@Serializable data class EspnAthlete(val displayName: String? = null)
-@Serializable data class EspnDetail(val athletesInvolved: List<EspnAthlete> = emptyList())
 @Serializable data class EspnTeam(val shortDisplayName: String? = null, val displayName: String? = null)
 @Serializable data class EspnComp(val homeAway: String? = null, val score: String? = null, val team: EspnTeam? = null)
 @Serializable data class EspnStatusWrapper(val displayClock: String? = null, val type: EspnStatusType? = null)
 @Serializable data class EspnStatusType(val state: String? = null)
-@Serializable data class EspnCompetition(val competitors: List<EspnComp> = emptyList(), val status: EspnStatusWrapper? = null, val details: List<EspnDetail> = emptyList())
+@Serializable data class EspnCompetition(val competitors: List<EspnComp> = emptyList(), val status: EspnStatusWrapper? = null)
 @Serializable data class EspnEvent(val id: String, val date: String? = null, val competitions: List<EspnCompetition> = emptyList())
 @Serializable data class EspnLeagueDto(val name: String? = null)
 @Serializable data class EspnResponse(val leagues: List<EspnLeagueDto> = emptyList(), val events: List<EspnEvent> = emptyList())
 data class MatchUi(val id: String, val h: String, val a: String, val hs: String?, val ascore: String?, val lg: String, val tag: String, val st: String, val live: Boolean, val dateTime: String, val b: BetData)
 
 interface ApiService {
-    @GET("apis/site/v2/sports/soccer/{league}/scoreboard")
-    suspend fun getMatches(@Path("league") lg: String): EspnResponse
-}
-
-object Api {
-    val service: ApiService by lazy {
-        val c = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).build()
-        val j = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
-        Retrofit.Builder().baseUrl("https://site.api.espn.com/").client(c)
-            .addConverterFactory(j.asConverterFactory("application/json".toMediaType())).build().create(ApiService::class.java)
-    }
+    @GET("soccer/{lg}/scoreboard")
+    suspend fun getScoreboard(@Path("lg") lg: String): EspnResponse
 }
 
 class MainViewModel : ViewModel() {
     val leagues = listOf(
-        League("arg.1", "Argentina", "ARG"), League("bra.1", "Brasil", "BRA"),
-        League("esp.1", "Espana", "ESP"), League("eng.1", "Premier", "ENG"),
-        League("uefa.champions", "Champions", "UEFA"), League("mex.1", "Mexico", "MEX"),
-        League("uru.1", "Uruguay", "URU"), League("fra.1", "Francia", "FRA"),
-        League("por.1", "Portugal", "POR"), League("usa.1", "MLS", "USA")
+        League("arg.1", "Argentina", "ARG"), League("bra.1", "Brasil", "BRA"), League("esp.1", "España", "ESP"),
+        League("eng.1", "Premier League", "ENG"), League("uefa.champions", "Champions", "UCL"), League("mex.1", "México", "MEX"),
+        League("uru.1", "Uruguay", "URU"), League("fra.1", "Francia", "FRA"), League("por.1", "Portugal", "POR"), League("usa.1", "MLS", "MLS")
     )
-    val selected = MutableStateFlow(leagues[0])
-    val matches = MutableStateFlow<List<MatchUi>>(emptyList())
-    val loading = MutableStateFlow(false)
-    val error = MutableStateFlow<String?>(null)
+    private val _matches = MutableStateFlow<List<MatchUi>>(emptyList())
+    val matches: StateFlow<List<MatchUi>> = _matches
+    private val _loading = MutableStateFlow(false)
+    val loading: StateFlow<Boolean> = _loading
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error
+    private val _selected = MutableStateFlow(leagues[0])
+    val selected: StateFlow<League> = _selected
+
+    private val api: ApiService by lazy {
+        val ok = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).build()
+        val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
+        Retrofit.Builder().baseUrl("https://site.api.espn.com/apis/site/v2/sports/").client(ok)
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType())).build().create(ApiService::class.java)
+    }
+
     init { load() }
-    fun select(l: League) { selected.value = l; load() }
+    fun select(league: League) { _selected.value = league; load() }
+
     fun load() {
-        loading.value = true; error.value = null
         viewModelScope.launch {
+            _loading.value = true; _error.value = null
+            val sel = _selected.value
             try {
-                val res = Api.service.getMatches(selected.value.code)
-                matches.value = res.events.mapNotNull { ev ->
-                    val c = ev.competitions.firstOrNull() ?: return@mapNotNull null
-                    val h = c.competitors.find { it.homeAway == "home" }
-                    val a = c.competitors.find { it.homeAway == "away" }
-                    val hn = h?.team?.shortDisplayName ?: h?.team?.displayName ?: "Local"
-                    val an = a?.team?.shortDisplayName ?: a?.team?.displayName ?: "Visitante"
-                    val live = c.status?.type?.state == "in"
-                    val st = if (live) "EN VIVO " + (c.status?.displayClock ?: "") else if (c.status?.type?.state == "post") "FINAL" else "POR COMENZAR"
-                    val livePlayer = c.details.flatMap { it.athletesInvolved }.firstOrNull { !it.displayName.isNullOrBlank() }?.displayName
+                val res = api.getScoreboard(sel.code)
+                val leagueName = res.leagues.firstOrNull()?.name ?: sel.name
+                val parsed = res.events.mapNotNull { ev ->
+                    val comp = ev.competitions.firstOrNull() ?: return@mapNotNull null
+                    val homeComp = comp.competitors.find { it.homeAway == "home" }
+                    val awayComp = comp.competitors.find { it.homeAway == "away" }
+                    val hName = homeComp?.team?.shortDisplayName ?: homeComp?.team?.displayName ?: "Local"
+                    val aName = awayComp?.team?.shortDisplayName ?: awayComp?.team?.displayName ?: "Visitante"
+                    val state = comp.status?.type?.state ?: "pre"
+                    val isLive = state == "in"
+                    val statusText = if (isLive) "EN VIVO ${comp.status?.displayClock ?: ""}".trim() else if (state == "post") "FINAL" else "PROGRAMADO"
                     val dt = formatMatchDateTime(ev.date)
-                    val bet = BetEngine.build(hn, an, ev.id, livePlayer)
-                    MatchUi(ev.id, hn, an, h?.score, a?.score, res.leagues.firstOrNull()?.name ?: selected.value.name, selected.value.tag, st.trim(), live, dt, bet)
+                    MatchUi(ev.id, hName, aName, homeComp?.score, awayComp?.score, leagueName, sel.tag, statusText, isLive, dt, BetEngine.build(hName, aName, ev.id))
                 }
-            } catch (e: Exception) { error.value = "Sin conexion o sin partidos hoy." }
-            finally { loading.value = false }
+                _matches.value = parsed
+            } catch (e: Exception) {
+                _error.value = "Error al conectar con ESPN: ${e.localizedMessage ?: "Intente nuevamente"}"
+            } finally {
+                _loading.value = false
+            }
         }
     }
 }
 
 @Composable
 fun OddsPill(label: String, odd: String, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier, color = Color(0xFF1E293B), shape = RoundedCornerShape(6.dp), border = BorderStroke(1.dp, Color(0xFF334155))) {
-        Column(modifier = Modifier.padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, fontSize = 9.sp, color = Color(0xFF94A3B8))
-            Text(odd, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF38BDF8))
+    Surface(modifier = modifier, color = Color(0xFF1E293B), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, Color(0xFF334155))) {
+        Column(modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, fontSize = 9.sp, color = Color(0xFF94A3B8), textAlign = TextAlign.Center)
+            Text(odd, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF38BDF8), textAlign = TextAlign.Center)
         }
     }
 }
@@ -181,8 +182,8 @@ fun OddsPill(label: String, odd: String, modifier: Modifier = Modifier) {
 @Composable
 fun MatchCard(m: MatchUi) {
     val b = m.b
-    Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF101726), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF1E293B))) {
-        Column(modifier = Modifier.padding(10.dp)) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF101726)), border = BorderStroke(1.dp, Color(0xFF1E293B))) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("[" + m.tag + "] " + m.lg, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
                 Surface(color = if (m.live) Color(0xFFDC2626) else Color(0xFF0F2E22), shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, if (m.live) Color(0xFFEF4444) else Color(0xFF059669))) {
@@ -268,4 +269,24 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.clickable { vm.select(l) },
                                     color = if (active) Color(0xFF0284C7) else Color(0xFF1E293B),
                                     shape = RoundedCornerShape(8.dp),
-                                    border = if (active) B
+                                    border = if (active) BorderStroke(1.dp, Color(0xFF38BDF8)) else null
+                                ) {
+                                    Text("[" + l.tag + "] " + l.name, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        if (load) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { CircularProgressIndicator(color = Color(0xFF38BDF8)) }
+                        else if (err != null && list.isEmpty()) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { Text(err ?: "", color = Color(0xFFEF4444), fontSize = 13.sp) }
+                        else if (list.isEmpty()) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { Text("No hay partidos hoy en " + sel.name, color = Color(0xFF64748B), fontSize = 13.sp) }
+                        else {
+                            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(list, key = { it.id }) { m -> MatchCard(m) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

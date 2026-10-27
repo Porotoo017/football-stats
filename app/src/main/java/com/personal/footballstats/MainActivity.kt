@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,12 +20,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -33,37 +37,39 @@ import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Path
+import retrofit2.http.Query
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
+// DATA MODELS (DARK PRO & REAL STATS)
 data class StarPlayer(val name: String, val club: String, val role: String, val avgShots: String, val pick: String, val prob: String, val odds: String)
+data class DisciplineStats(val yellow: Int?, val red: Int?, val total: Int?, val fouls: Int?, val hasData: Boolean) {
+    fun label(): String = if (!hasData || total == null) "Sin datos" else "$total ($yellow 🟨 • $red 🟥)"
+}
 data class MatchOdds(val home: String, val draw: String, val away: String)
-data class BetData(val odds: MatchOdds, val favorite: String, val dc: String, val goals: String, val shots: String, val corn: String, val card: String, val star: StarPlayer, val parlay: String, val parlayOdds: String)
+data class BetData(val odds: MatchOdds, val favorite: String, val dc: String, val goals: String, val shots: String, val corn: String, val disc: DisciplineStats, val star: StarPlayer, val parlay: String, val parlayOdds: String)
 data class League(val code: String, val name: String, val tag: String)
 
+// MOTOR DE JUGADORES REALES (CLUB Y ATACANTES POR LIGA)
 object BetEngine {
-    private val GIANTS = setOf("boca", "river", "racing", "independiente", "san lorenzo", "velez", "talleres", "estudiantes", "lanus", "huracan", "flamengo", "palmeiras", "mineiro", "botafogo", "sao paulo", "corinthians", "fluminense", "gremio", "internacional", "cruzeiro", "madrid", "barcelona", "atletico", "athletic", "sevilla", "betis", "villarreal", "city", "liverpool", "arsenal", "chelsea", "tottenham", "united", "psg", "marseille", "monaco", "sporting", "benfica", "porto", "america", "cruz azul", "tigres", "monterrey", "toluca", "penarol", "nacional", "miami")
+    private val GIANTS = setOf("boca", "river", "racing", "independiente", "san lorenzo", "velez", "talleres", "estudiantes", "lanus", "huracan", "flamengo", "palmeiras", "mineiro", "botafogo", "sao paulo", "corinthians", "fluminense", "gremio", "internacional", "cruzeiro", "madrid", "barcelona", "atletico", "athletic", "sevilla", "betis", "villarreal", "city", "liverpool", "arsenal", "chelsea", "tottenham", "united", "psg", "marseille", "monaco", "sporting", "benfica", "porto", "america", "cruz azul", "tigres", "monterrey", "toluca", "penarol", "nacional", "wanderers", "miami")
     private val SQUADS = mapOf(
-        "boca" to listOf("Edinson Cavani", "Miguel Merentiel"), "river" to listOf("Miguel Borja", "Facundo Colidio"), "racing" to listOf("A. Maravilla Martinez", "Maximiliano Salas"),
-        "independiente" to listOf("Gabriel Avalos", "Santiago Montiel"), "san lorenzo" to listOf("Alexis Cuello", "Iker Muniain"), "velez" to listOf("Braian Romero", "Claudio Aquino"),
-        "talleres" to listOf("Federico Girotti", "Ruben Botta"), "estudiantes" to listOf("Guido Carrillo", "Tiago Palacios"), "lanus" to listOf("Walter Bou", "Marcelino Moreno"),
-        "huracan" to listOf("Rodrigo Echeverria", "Eric Ramirez"), "belgrano" to listOf("Franco Jara", "Bryan Reyna"), "instituto" to listOf("Damian Puebla", "Facundo Suarez"),
-        "riestra" to listOf("Jonathan Herrera", "Antony Alonso"), "central" to listOf("Marco Ruben", "Ignacio Malcorra"), "newell" to listOf("Juan I. Ramirez", "Ever Banega"),
-        "gimnasia" to listOf("Rodrigo Castillo", "Matias Abaldo"), "platense" to listOf("Mateo Pellegrino", "Ronaldo Martinez"), "banfield" to listOf("Bruno Sepulveda", "Geronimo Rivera"),
-        "tigre" to listOf("Florian Monzon", "Armoa Blas"), "union" to listOf("Nicolas Orsini", "Lucas Gamba"), "flamengo" to listOf("Pedro Guilherme", "Gabriel Barbosa"),
-        "palmeiras" to listOf("Estevao Willian", "Flaco Lopez"), "corinthians" to listOf("Memphis Depay", "Yuri Alberto"), "fluminense" to listOf("German Cano", "Jhon Arias"),
-        "vasco" to listOf("Pablo Vegetti", "Dimitri Payet"), "cruzeiro" to listOf("Kaio Jorge", "Matheus Pereira"), "gremio" to listOf("Martin Braithwaite", "Diego Costa"),
-        "internacional" to listOf("Rafael Borre", "Enner Valencia"), "mineiro" to listOf("Hulk", "Paulinho"), "botafogo" to listOf("Igor Jesus", "Luiz Henrique"),
-        "sao paulo" to listOf("Jonathan Calleri", "Lucas Moura"), "madrid" to listOf("Vinicius Jr", "Kylian Mbappe"), "barcelona" to listOf("Robert Lewandowski", "Lamine Yamal"),
-        "atletico" to listOf("Julian Alvarez", "Antoine Griezmann"), "city" to listOf("Erling Haaland", "Phil Foden"), "liverpool" to listOf("Mohamed Salah", "Darwin Nunez"),
-        "arsenal" to listOf("Bukayo Saka", "Kai Havertz"), "chelsea" to listOf("Cole Palmer", "Nicolas Jackson"), "psg" to listOf("Bradley Barcola", "Ousmane Dembele"),
-        "sporting" to listOf("Viktor Gyokeres", "Trincao"), "benfica" to listOf("Angel Di Maria", "Pavlidis"), "porto" to listOf("Samu Omorodion", "Galeno"),
-        "america" to listOf("Henry Martin", "Zendejas"), "cruz azul" to listOf("Angel Sepulveda", "Giakoumakis"), "tigres" to listOf("Andre-Pierre Gignac", "Brunetta"),
-        "monterrey" to listOf("German Berterame", "Canales"), "penarol" to listOf("Facundo Batista", "Maxi Silvera"), "nacional" to listOf("Ruben Bentancourt", "Santander"), "miami" to listOf("Lionel Messi", "Luis Suarez")
+        "boca" to listOf("Edinson Cavani", "Miguel Merentiel"), "river" to listOf("Miguel Borja", "Facundo Colidio"), "racing" to listOf("Adrián Maravilla Martínez", "Maximiliano Salas"),
+        "independiente" to listOf("Gabriel Ávalos", "Santiago Montiel"), "san lorenzo" to listOf("Alexis Cuello", "Iker Muniain"), "velez" to listOf("Braian Romero", "Claudio Aquino"),
+        "talleres" to listOf("Federico Girotti", "Rubén Botta"), "estudiantes" to listOf("Guido Carrillo", "Tiago Palacios"), "lanus" to listOf("Walter Bou", "Marcelino Moreno"),
+        "huracan" to listOf("Rodrigo Echeverría", "Eric Ramírez"), "flamengo" to listOf("Pedro Guilherme", "Gabriel Barbosa"), "palmeiras" to listOf("Estêvão Willian", "Flaco López"),
+        "botafogo" to listOf("Igor Jesus", "Luiz Henrique"), "fluminense" to listOf("Germán Cano", "Jhon Arias"), "corinthians" to listOf("Memphis Depay", "Yuri Alberto"),
+        "madrid" to listOf("Vinícius Júnior", "Kylian Mbappé"), "barcelona" to listOf("Robert Lewandowski", "Lamine Yamal"), "atletico" to listOf("Julián Álvarez", "Antoine Griezmann"),
+        "city" to listOf("Erling Haaland", "Phil Foden"), "liverpool" to listOf("Mohamed Salah", "Darwin Núñez"), "arsenal" to listOf("Bukayo Saka", "Kai Havertz"),
+        "chelsea" to listOf("Cole Palmer", "Nicolas Jackson"), "psg" to listOf("Bradley Barcola", "Ousmane Dembélé"), "sporting" to listOf("Viktor Gyökeres", "Trincão"),
+        "benfica" to listOf("Ángel Di María", "Vangelis Pavlidis"), "porto" to listOf("Samu Omorodion", "Galeno"), "america" to listOf("Henry Martín", "Alejandro Zendejas"),
+        "cruz azul" to listOf("Ángel Sepúlveda", "Giorgos Giakoumakis"), "tigres" to listOf("André-Pierre Gignac", "Juan Brunetta"), "penarol" to listOf("Facundo Batista", "Maxi Silvera"),
+        "nacional" to listOf("Rubén Bentancourt", "Federico Santander"), "wanderers" to listOf("Matías Fonseca", "Nicolás Royón"), "miami" to listOf("Lionel Messi", "Luis Suárez")
     )
-    private val DYNAMIC = listOf("Mateo Retegui", "Valentin Castellanos", "Facundo Colidio", "Milton Gimenez", "Ronaldo Martinez", "Ignacio Pussetto", "Franco Troyansky", "Gaston Veron", "Lucas Janson", "Facundo Pons", "Agustin Ruberto", "Alan Lescano", "Abiel Osorio", "Salomon Rodriguez", "Jhonatan Candia", "Jonathan Herrera")
+    private val DYNAMIC = listOf("Mateo Retegui", "Valentín Castellanos", "Facundo Colidio", "Milton Giménez", "Ronaldo Martínez", "Ignacio Pussetto", "Agustín Ruberto")
 
-    fun build(h: String, a: String, id: String): BetData {
+    fun build(h: String, a: String, id: String, disc: DisciplineStats, rosterNames: List<String>? = null): BetData {
         val s = abs((h + a + id).hashCode())
         val hl = h.lowercase(); val al = a.lowercase()
         val hG = GIANTS.any { hl.contains(it) }; val aG = GIANTS.any { al.contains(it) }
@@ -72,17 +78,18 @@ object BetEngine {
                    else if (fav == a) MatchOdds("5." + (20 + (s % 40)), "3." + (80 + (s % 25)), "1." + (45 + (s % 20)))
                    else MatchOdds("2." + (10 + (s % 25)), "3." + (15 + (s % 20)), "3." + (20 + (s % 30)))
         val dc = if (fav == a) "X2 (Empate o $a)" else "1X ($h o Empate)"
+
         val clubKey = SQUADS.keys.firstOrNull { hl.contains(it) } ?: SQUADS.keys.firstOrNull { al.contains(it) }
-        val squad = if (clubKey != null) SQUADS[clubKey] else null
         val chosen = when {
-            squad != null && squad.isNotEmpty() -> squad[abs((id + fav).hashCode()) % squad.size]
+            rosterNames != null && rosterNames.isNotEmpty() -> rosterNames[abs((id + fav).hashCode()) % rosterNames.size]
+            clubKey != null && SQUADS[clubKey]?.isNotEmpty() == true -> SQUADS[clubKey]!![abs((id + fav).hashCode()) % SQUADS[clubKey]!!.size]
             else -> DYNAMIC[abs((id + fav).hashCode()) % DYNAMIC.size]
         }
         val shotAvg = "" + (2 + (s % 3)) + "." + (2 + (s % 7)) + " remates (" + (1 + (s % 2)) + "." + (4 + (s % 5)) + " al arco)"
-        val star = StarPlayer(chosen, fav, "Delantero en Cancha", shotAvg, "Mas de 1.5 disparos al arco", "" + (75 + (s % 15)) + "%", "1." + (70 + (s % 25)))
-        val goals = if (s % 3 != 0) "Mas de 2.5 Goles" else "Menos de 2.5 Goles"
+        val star = StarPlayer(chosen, fav, "Delantero en Cancha", shotAvg, "Más de 1.5 disparos al arco", "" + (75 + (s % 15)) + "%", "1." + (70 + (s % 25)))
+        val goals = if (s % 3 != 0) "Más de 2.5 Goles" else "Menos de 2.5 Goles"
         val parlay = "FAV: $dc | Goles +1.5 | ${star.name} +1.5 al arco"
-        return BetData(odds, fav, dc, goals, "Mas de 8.5 Remates", "Mas de 8.5 Corners", "Mas de 4.5 Tarjetas", star, parlay, "3." + (40 + (s % 30)))
+        return BetData(odds, fav, dc, goals, "Más de 8.5 Remates", "Más de 8.5 Corners", disc, star, parlay, "3." + (40 + (s % 30)))
     }
 }
 
@@ -97,41 +104,57 @@ fun formatMatchDateTime(d: String?): String {
         val dStr = if (day < 10) "0$day" else "$day"
         val hStr = if (h < 10) "0$h" else "$h"
         "$dStr/$m • $hStr:${tp[1]} hs"
-    } catch (e: Exception) { "Hoy" }
+    } catch (_: Exception) { "Hoy" }
 }
 
-@Serializable data class EspnTeam(val shortDisplayName: String? = null, val displayName: String? = null)
+// ESPN DTOs CON DISCIPLINA Y ROSTER
+@Serializable data class EspnTeam(val id: String? = null, val shortDisplayName: String? = null, val displayName: String? = null)
 @Serializable data class EspnComp(val homeAway: String? = null, val score: String? = null, val team: EspnTeam? = null)
-@Serializable data class EspnStatusWrapper(val displayClock: String? = null, val type: EspnStatusType? = null)
 @Serializable data class EspnStatusType(val state: String? = null)
+@Serializable data class EspnStatusWrapper(val displayClock: String? = null, val type: EspnStatusType? = null)
 @Serializable data class EspnCompetition(val competitors: List<EspnComp> = emptyList(), val status: EspnStatusWrapper? = null)
 @Serializable data class EspnEvent(val id: String, val date: String? = null, val competitions: List<EspnCompetition> = emptyList())
 @Serializable data class EspnLeagueDto(val name: String? = null)
-@Serializable data class EspnResponse(val leagues: List<EspnLeagueDto> = emptyList(), val events: List<EspnEvent> = emptyList())
-data class MatchUi(val id: String, val h: String, val a: String, val hs: String?, val ascore: String?, val lg: String, val tag: String, val st: String, val live: Boolean, val dateTime: String, val b: BetData)
+@Serializable data class EspnScoreboardResponse(val leagues: List<EspnLeagueDto> = emptyList(), val events: List<EspnEvent> = emptyList())
+
+@Serializable data class EspnStatItem(val name: String? = null, val displayValue: String? = null)
+@Serializable data class EspnBoxTeam(val team: EspnTeam? = null, val statistics: List<EspnStatItem> = emptyList())
+@Serializable data class EspnBox(val teams: List<EspnBoxTeam> = emptyList())
+@Serializable data class EspnSummary(val boxscore: EspnBox? = null)
+
+@Serializable data class EspnPosition(val displayName: String? = null, val name: String? = null)
+@Serializable data class EspnAthlete(val id: String? = null, val displayName: String? = null, val fullName: String? = null, val position: EspnPosition? = null)
+@Serializable data class EspnRosterResponse(val athletes: List<EspnAthlete> = emptyList())
+
+data class MatchUi(val id: String, val h: String, val a: String, val hId: String?, val aId: String?, val hs: String?, val ascore: String?, val lg: String, val tag: String, val st: String, val live: Boolean, val dateTime: String, val b: BetData)
 
 interface ApiService {
     @GET("soccer/{lg}/scoreboard")
-    suspend fun getScoreboard(@Path("lg") lg: String): EspnResponse
+    suspend fun getScoreboard(@Path("lg") lg: String): EspnScoreboardResponse
+    @GET("soccer/{lg}/summary")
+    suspend fun getSummary(@Path("lg") lg: String, @Query("event") id: String): EspnSummary
+    @GET("soccer/{lg}/teams/{teamId}/roster")
+    suspend fun getRoster(@Path("lg") lg: String, @Path("teamId") id: String): EspnRosterResponse
 }
 
 class MainViewModel : ViewModel() {
     val leagues = listOf(
-        League("arg.1", "Argentina", "ARG"), League("bra.1", "Brasil", "BRA"), League("esp.1", "España", "ESP"),
-        League("eng.1", "Premier League", "ENG"), League("uefa.champions", "Champions", "UCL"), League("mex.1", "México", "MEX"),
-        League("uru.1", "Uruguay", "URU"), League("fra.1", "Francia", "FRA"), League("por.1", "Portugal", "POR"), League("usa.1", "MLS", "MLS")
+        League("arg.1", "Argentina", "ARG"), League("bra.1", "Brasil", "BRA"), League("esp.1", "LaLiga", "ESP"),
+        League("eng.1", "Premier", "ENG"), League("uefa.champions", "Champions", "UCL"), League("mex.1", "Liga MX", "MEX"),
+        League("uru.1", "Uruguay", "URU"), League("fra.1", "Ligue 1", "FRA"), League("por.1", "Primeira", "POR"), League("usa.1", "MLS", "MLS")
     )
-    private val _matches = MutableStateFlow<List<MatchUi>>(emptyList())
-    val matches: StateFlow<List<MatchUi>> = _matches
-    private val _loading = MutableStateFlow(false)
-    val loading: StateFlow<Boolean> = _loading
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error
-    private val _selected = MutableStateFlow(leagues[0])
-    val selected: StateFlow<League> = _selected
+    private val _matches = MutableStateFlow<List<MatchUi>>(emptyList()); val matches: StateFlow<List<MatchUi>> = _matches
+    private val _loading = MutableStateFlow(false); val loading: StateFlow<Boolean> = _loading
+    private val _error = MutableStateFlow<String?>(null); val error: StateFlow<String?> = _error
+    private val _selected = MutableStateFlow(leagues[0]); val selected: StateFlow<League> = _selected
+    private val _detail = MutableStateFlow<MatchUi?>(null); val detail: StateFlow<MatchUi?> = _detail
+    private val _player = MutableStateFlow<StarPlayer?>(null); val player: StateFlow<StarPlayer?> = _player
+
+    private val discCache = ConcurrentHashMap<String, DisciplineStats>()
+    private val rosterCache = ConcurrentHashMap<String, List<String>>()
 
     private val api: ApiService by lazy {
-        val ok = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).build()
+        val ok = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS).readTimeout(12, TimeUnit.SECONDS).build()
         val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
         Retrofit.Builder().baseUrl("https://site.api.espn.com/apis/site/v2/sports/").client(ok)
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType())).build().create(ApiService::class.java)
@@ -139,6 +162,8 @@ class MainViewModel : ViewModel() {
 
     init { load() }
     fun select(league: League) { _selected.value = league; load() }
+    fun openDetail(m: MatchUi) { _detail.value = m }; fun closeDetail() { _detail.value = null }
+    fun openPlayer(p: StarPlayer) { _player.value = p }; fun closePlayer() { _player.value = null }
 
     fun load() {
         viewModelScope.launch {
@@ -146,147 +171,111 @@ class MainViewModel : ViewModel() {
             val sel = _selected.value
             try {
                 val res = api.getScoreboard(sel.code)
-                val leagueName = res.leagues.firstOrNull()?.name ?: sel.name
-                val parsed = res.events.mapNotNull { ev ->
-                    val comp = ev.competitions.firstOrNull() ?: return@mapNotNull null
-                    val homeComp = comp.competitors.find { it.homeAway == "home" }
-                    val awayComp = comp.competitors.find { it.homeAway == "away" }
-                    val hName = homeComp?.team?.shortDisplayName ?: homeComp?.team?.displayName ?: "Local"
-                    val aName = awayComp?.team?.shortDisplayName ?: awayComp?.team?.displayName ?: "Visitante"
-                    val state = comp.status?.type?.state ?: "pre"
-                    val isLive = state == "in"
-                    val statusText = if (isLive) "EN VIVO ${comp.status?.displayClock ?: ""}".trim() else if (state == "post") "FINAL" else "PROGRAMADO"
-                    val dt = formatMatchDateTime(ev.date)
-                    MatchUi(ev.id, hName, aName, homeComp?.score, awayComp?.score, leagueName, sel.tag, statusText, isLive, dt, BetEngine.build(hName, aName, ev.id))
+                val lgName = res.leagues.firstOrNull()?.name ?: sel.name
+                val parsed = withContext(Dispatchers.Default) {
+                    res.events.mapNotNull { ev ->
+                        val c = ev.competitions.firstOrNull() ?: return@mapNotNull null
+                        val hComp = c.competitors.find { it.homeAway == "home" }
+                        val aComp = c.competitors.find { it.homeAway == "away" }
+                        val h = hComp?.team?.shortDisplayName ?: hComp?.team?.displayName ?: "Local"
+                        val a = aComp?.team?.shortDisplayName ?: aComp?.team?.displayName ?: "Visitante"
+                        val isLive = c.status?.type?.state == "in"
+                        val st = if (isLive) "EN VIVO ${c.status?.displayClock ?: ""}".trim() else if (c.status?.type?.state == "post") "FINAL" else "PROGRAMADO"
+                        val disc = discCache[ev.id] ?: DisciplineStats(null, null, null, null, false)
+                        val rFav = rosterCache[if (h == a) (hComp?.team?.id ?: "") else (aComp?.team?.id ?: "")]
+                        MatchUi(ev.id, h, a, hComp?.team?.id, aComp?.team?.id, hComp?.score, aComp?.score, lgName, sel.tag, st, isLive, formatMatchDateTime(ev.date), BetEngine.build(h, a, ev.id, disc, rFav))
+                    }
                 }
                 _matches.value = parsed
-            } catch (e: Exception) {
-                _error.value = "Error al conectar con ESPN: ${e.localizedMessage ?: "Intente nuevamente"}"
-            } finally {
-                _loading.value = false
-            }
+                launch(Dispatchers.IO) { enrichDisciplineAndRosters(sel.code, parsed) }
+            } catch (e: Exception) { _error.value = "Error ESPN: ${e.localizedMessage ?: "Reintente"}" }
+            finally { _loading.value = false }
         }
     }
+
+    private suspend fun enrichDisciplineAndRosters(code: String, current: List<MatchUi>) {
+        var updated = false
+        val enriched = current.map { m ->
+            var disc = discCache[m.id]
+            if (disc == null) {
+                try {
+                    val s = api.getSummary(code, m.id)
+                    val teams = s.boxscore?.teams ?: emptyList()
+                    if (teams.isNotEmpty()) {
+                        var y = 0; var r = 0; var f = 0; var found = false
+                        for (tm in teams) {
+                            for (st in tm.statistics) {
+                                val n = st.name?.lowercase() ?: ""; val v = st.displayValue?.toIntOrNull() ?: 0
+                                if (n.contains("yellow")) { y += v; found = true }
+                                else if (n.contains("red")) { r += v; found = true }
+                                else if (n.contains("foul")) { f += v; found = true }
+                            }
+                        }
+                        disc = DisciplineStats(y, r, y + r, f, found)
+                    } else disc = DisciplineStats(null, null, null, null, false)
+                } catch (_: Exception) { disc = DisciplineStats(null, null, null, null, false) }
+                disc?.let { discCache[m.id] = it }
+            }
+
+            val targetTeamId = if (m.b.favorite == m.a) m.aId else m.hId
+            if (targetTeamId != null && !rosterCache.containsKey(targetTeamId)) {
+                try {
+                    val rRes = api.getRoster(code, targetTeamId)
+                    val forwards = rRes.athletes.filter {
+                        val pos = (it.position?.displayName ?: it.position?.name ?: "").lowercase()
+                        pos.contains("forward") || pos.contains("delantero") || pos.contains("attack")
+                    }.mapNotNull { it.fullName ?: it.displayName }
+                    if (forwards.isNotEmpty()) rosterCache[targetTeamId] = forwards
+                } catch (_: Exception) {}
+            }
+
+            val rFav = targetTeamId?.let { rosterCache[it] }
+            val newBet = BetEngine.build(m.h, m.a, m.id, disc ?: DisciplineStats(null, null, null, null, false), rFav)
+            if (newBet != m.b) updated = true
+            m.copy(b = newBet)
+        }
+        if (updated) withContext(Dispatchers.Main) { _matches.value = enriched }
+    }
 }
+
+// ------------------- UI DARK MODE PREMIUM & GLASSMORPHISM -------------------
+val DarkBg = Color(0xFF0A0A0C); val SurfaceCard = Color(0xFF12141A); val CardBorder = Color(0xFF1E2330)
+val NeonLime = Color(0xFF99FF00); val CyanElectric = Color(0xFF00F0FF); val AmberOdds = Color(0xFFFFB800)
 
 @Composable
 fun OddsPill(label: String, odd: String, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier, color = Color(0xFF1E293B), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, Color(0xFF334155))) {
-        Column(modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, fontSize = 9.sp, color = Color(0xFF94A3B8), textAlign = TextAlign.Center)
-            Text(odd, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF38BDF8), textAlign = TextAlign.Center)
+    Surface(modifier = modifier, color = Color(0xFF161A24), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, CardBorder)) {
+        Column(modifier = Modifier.padding(vertical = 5.dp, horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, fontSize = 8.sp, color = Color(0xFF94A3B8), textAlign = TextAlign.Center)
+            Text(odd, fontSize = 12.sp, fontWeight = FontWeight.Black, color = CyanElectric, textAlign = TextAlign.Center)
         }
     }
 }
 
 @Composable
-fun MatchCard(m: MatchUi) {
+fun MatchCard(m: MatchUi, onMatchClick: () -> Unit, onPlayerClick: (StarPlayer) -> Unit) {
     val b = m.b
-    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF101726)), border = BorderStroke(1.dp, Color(0xFF1E293B))) {
-        Column(modifier = Modifier.padding(12.dp)) {
+    Card(modifier = Modifier.fillMaxWidth().clickable { onMatchClick() }, shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = SurfaceCard), border = BorderStroke(1.dp, CardBorder)) {
+        Column(modifier = Modifier.padding(11.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("[" + m.tag + "] " + m.lg, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
-                Surface(color = if (m.live) Color(0xFFDC2626) else Color(0xFF0F2E22), shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, if (m.live) Color(0xFFEF4444) else Color(0xFF059669))) {
+                Surface(color = Color(0xFF101B2B), shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, Color(0xFF0284C7))) {
+                    Text("[" + m.tag + "] " + m.lg, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = CyanElectric, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+                Surface(color = if (m.live) Color(0xFFFF3B30) else Color(0xFF0F1E19), shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, if (m.live) Color(0xFFFF6961) else Color(0xFF059669))) {
                     Text(if (m.live) m.st else m.dateTime, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                 }
             }
             Spacer(modifier = Modifier.height(6.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(m.h, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
-                Surface(color = Color(0xFF1E293B), shape = RoundedCornerShape(6.dp), modifier = Modifier.padding(horizontal = 6.dp)) {
-                    Text(if (m.hs != null && m.ascore != null) m.hs + " : " + m.ascore else "VS", fontWeight = FontWeight.Black, fontSize = 12.sp, color = if (m.live) Color(0xFF34D399) else Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                Text(m.h, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, color = Color.White, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+                Surface(color = Color(0xFF1A2234), shape = RoundedCornerShape(6.dp), modifier = Modifier.padding(horizontal = 6.dp)) {
+                    Text(if (m.hs != null && m.ascore != null) "${m.hs} : ${m.ascore}" else "VS", fontWeight = FontWeight.Black, fontSize = 12.sp, color = if (m.live) NeonLime else Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                 }
-                Text(m.a, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OddsPill("1 (Local)", b.odds.home, Modifier.weight(1f))
-                OddsPill("X (Empate)", b.odds.draw, Modifier.weight(1f))
-                OddsPill("2 (Visitante)", b.odds.away, Modifier.weight(1f))
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF0A221C), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Color(0xFF059669))) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("★ MAS TIROS AL ARCO", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF34D399))
-                        Surface(color = Color(0xFF064E3B), shape = RoundedCornerShape(4.dp)) {
-                            Text("Cuota " + b.star.odds, fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF6EE7B7), modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
-                        }
-                    }
-                    Text(b.star.name + " (" + b.star.club + ")", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White)
-                    Text("Pos: " + b.star.role + " • " + b.star.avgShots, fontSize = 10.sp, color = Color(0xFFCBD5E1))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(b.star.pick, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFA7F3D0))
-                        Text("Prob: " + b.star.prob, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF34D399))
-                    }
-                }
+                Text(m.a, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, color = Color.White, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
             }
             Spacer(modifier = Modifier.height(6.dp))
-            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF161E2E), shape = RoundedCornerShape(8.dp)) {
-                Column(modifier = Modifier.padding(6.dp)) {
-                    Text("[DOBLE OPORTUNIDAD] " + b.dc + " (Fav: " + b.favorite + ")", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
-                    Text("[GOLES] " + b.goals + " | [REMATES] " + b.shots, fontSize = 9.sp, color = Color(0xFFCBD5E1))
-                    Text("[CORNERS] " + b.corn + " | [TARJETAS] " + b.card, fontSize = 9.sp, color = Color(0xFFCBD5E1))
-                }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF2B1D04), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, Color(0xFFD97706))) {
-                Row(modifier = Modifier.padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text("PARLAY (Cuota " + b.parlayOdds + ")", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFBBF24))
-                        Text(b.parlay, fontSize = 9.sp, color = Color(0xFFFDE68A))
-                    }
-                }
-            }
-        }
-    }
-}
-
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF080C14), surface = Color(0xFF101726), primary = Color(0xFF38BDF8))) {
-                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF080C14)) {
-                    val vm: MainViewModel = viewModel()
-                    val list by vm.matches.collectAsState()
-                    val load by vm.loading.collectAsState()
-                    val err by vm.error.collectAsState()
-                    val sel by vm.selected.collectAsState()
-
-                    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("BET PRO STATS", fontSize = 20.sp, fontWeight = FontWeight.Black, color = Color(0xFF38BDF8))
-                            Button(onClick = { vm.load() }, enabled = !load, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))) {
-                                Text("↻", fontSize = 16.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Black)
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(vm.leagues) { l ->
-                                val active = l == sel
-                                Surface(
-                                    modifier = Modifier.clickable { vm.select(l) },
-                                    color = if (active) Color(0xFF0284C7) else Color(0xFF1E293B),
-                                    shape = RoundedCornerShape(8.dp),
-                                    border = if (active) BorderStroke(1.dp, Color(0xFF38BDF8)) else null
-                                ) {
-                                    Text("[" + l.tag + "] " + l.name, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        if (load) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { CircularProgressIndicator(color = Color(0xFF38BDF8)) }
-                        else if (err != null && list.isEmpty()) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { Text(err ?: "", color = Color(0xFFEF4444), fontSize = 13.sp) }
-                        else if (list.isEmpty()) Box(modifier = Modifier.fillMaxSize().weight(1f), Alignment.Center) { Text("No hay partidos hoy en " + sel.name, color = Color(0xFF64748B), fontSize = 13.sp) }
-                        else {
-                            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                items(list, key = { it.id }) { m -> MatchCard(m) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Surface(modifier = Modifier.weight(1f), color = Color(0xFF161A24), shape = RoundedCornerShape(6.dp), border = BorderStroke(1.dp, Color(0xFF232838))) {
+                    Column(modifier = Modifier.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("TARJETAS REALES", fontSize = 8.sp, color = AmberOdds, fontWeight = FontWeight.Bold)
+           

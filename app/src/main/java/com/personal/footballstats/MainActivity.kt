@@ -307,7 +307,7 @@ object ParlayEngine {
             ParlayLeg("GOLES", "Más de 2.5 Goles", round(goalLambda * 10.0) / 10.0, round(pOver25 * 1000.0) / 1000.0, fairOdds(pOver25), mOddsGoals25, round(evGoals25 * 1000.0) / 10.0, "λ=" + (round(goalLambda * 10.0) / 10.0) + " G")
         } else {
             val safeOdds15 = max(mOddsGoals15, round((1.0 / pOver15 * 1.07) * 100.0) / 100.0)
-            ParlayLeg("GOLES", "Más de 1.5 Goles", round(goalLambda * 10.0) / 10.0, round(pOver15 * 1000.0) / 10.0, fairOdds(pOver15), safeOdds15, round(calculateEV(pOver15, safeOdds15) * 1000.0) / 10.0, "λ=" + (round(goalLambda * 10.0) / 10.0) + " G")
+            ParlayLeg("GOLES", "Más de 1.5 Goles", round(goalLambda * 10.0) / 10.0, round(pOver15 * 1000.0) / 1000.0, fairOdds(pOver15), safeOdds15, round(calculateEV(pOver15, safeOdds15) * 1000.0) / 10.0, "λ=" + (round(goalLambda * 10.0) / 10.0) + " G")
         }
         candidateLegs.add(bestGoalLeg)
 
@@ -453,6 +453,15 @@ class FootballViewModel : ViewModel() {
         private set
     var errorMsg by mutableStateOf<String?>(null)
         private set
+
+    // --- NUEVO: Estado para el filtro Top EV ---
+    var isTopEvFilterEnabled by mutableStateOf(false)
+        private set
+
+    fun toggleTopEvFilter() {
+        isTopEvFilterEnabled = !isTopEvFilterEnabled
+    }
+    // -------------------------------------------
 
     init {
         fetchMatches(selLeague)
@@ -901,9 +910,29 @@ class MainActivity : ComponentActivity() {
                         // Header de la App
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("BET PRO STATS", fontSize = 15.sp, fontWeight = FontWeight.Black, color = Color.White)
-                            Button(onClick = { viewModel.refresh() }, enabled = !viewModel.loading, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161F33)), shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                                Text("↻", fontSize = 13.sp, color = Cyan, fontWeight = FontWeight.Black)
+                            
+                            // NUEVO: Fila con el botón TOP EV y el botón de Recargar
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    modifier = Modifier.clickable { viewModel.toggleTopEvFilter() },
+                                    color = if (viewModel.isTopEvFilterEnabled) Color(0x3300FF66) else Color(0xFF161F33),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, if (viewModel.isTopEvFilterEnabled) Lime else CyberBorder)
+                                ) {
+                                    Text(
+                                        "🔥 TOP EV",
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = if (viewModel.isTopEvFilterEnabled) Lime else Color(0xFF64748B)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Button(onClick = { viewModel.refresh() }, enabled = !viewModel.loading, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161F33)), shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                                    Text("↻", fontSize = 13.sp, color = Cyan, fontWeight = FontWeight.Black)
+                                }
                             }
+                            // ----------------------------------------------------
                         }
                         Spacer(modifier = Modifier.height(5.dp))
 
@@ -936,9 +965,25 @@ class MainActivity : ComponentActivity() {
                         } else if (viewModel.matches.isEmpty()) {
                             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { Text("Sin eventos hoy en " + viewModel.selLeague.name, color = Color(0xFF64748B), fontSize = 11.sp) }
                         } else {
-                            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(viewModel.matches, key = { it.id }) { m -> CyberMatch(m = m) }
+                            
+                            // NUEVO: Filtramos la lista según el botón Top EV
+                            val displayList = if (viewModel.isTopEvFilterEnabled) {
+                                viewModel.matches.filter { it.parlay.totalEvPercent >= 40.0 }
+                                    .sortedByDescending { it.parlay.totalEvPercent }
+                            } else {
+                                viewModel.matches
                             }
+
+                            if (displayList.isEmpty() && viewModel.isTopEvFilterEnabled) {
+                                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                    Text("No hay apuestas con +40% EV en esta liga.\n¡Probá otra!", color = Cyan, fontSize = 11.sp, textAlign = TextAlign.Center)
+                                }
+                            } else {
+                                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    items(displayList, key = { it.id }) { m -> CyberMatch(m = m) }
+                                }
+                            }
+                            // ----------------------------------------------------
                         }
                     }
                 }

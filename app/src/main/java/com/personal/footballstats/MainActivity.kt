@@ -111,7 +111,7 @@ class FootballViewModel : ViewModel() {
         try {
             val cleanName = teamName.split(" ").firstOrNull() ?: teamName
             val encodedName = URLEncoder.encode(cleanName, "UTF-8")
-            val url = URL("https://sports.bzzoiro.com/api/v2/teams/?search=$encodedName")
+            val url = URL("https://sports.bzzoiro.com/api/v2/teams/?name=$encodedName")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.setRequestProperty("Authorization", bzzoiroApiKey)

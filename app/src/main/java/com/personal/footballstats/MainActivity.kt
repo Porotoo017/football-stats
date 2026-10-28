@@ -33,7 +33,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.pow
@@ -91,7 +90,7 @@ object ParlayEngine {
 }
 
 // =============================================================
-// 3. VIEWMODEL (ESPN + BZZOIRO CON TRADUCTOR Y PROMEDIOS)
+// 3. VIEWMODEL (ESPN + BZZOIRO)
 // =============================================================
 class FootballViewModel : ViewModel() {
     val leagues = listOf(League("arg.1","Argentina","ARG"), League("bra.1","Brasil","BRA"), League("esp.1","LaLiga","ESP"), League("eng.1","Premier","ENG"), League("uefa.champions","Champions","UCL"), League("mex.1","Liga MX","MEX"), League("uru.1","Uruguay","URU"), League("fra.1","Ligue 1","FRA"), League("por.1","Primeira","POR"), League("usa.1","MLS","MLS"))
@@ -109,17 +108,7 @@ class FootballViewModel : ViewModel() {
 
     private fun getTeamStats(teamName: String): Pair<Double?, Double?> {
         try {
-            // 1. Traductor de nombres de ESPN a Bzzoiro
-            val nameMap = mapOf(
-                "Man Utd" to "Manchester United",
-                "Man City" to "Manchester City",
-                "Nottm Forest" to "Nottingham Forest",
-                "Leeds" to "Leeds United",
-                "Sheffield Utd" to "Sheffield United",
-                "West Ham" to "West Ham United",
-                "Newcastle" to "Newcastle United",
-                "Tottenham" to "Tottenham Hotspur"
-            )
+            val nameMap = mapOf("Man Utd" to "Manchester United", "Man City" to "Manchester City", "Nottm Forest" to "Nottingham Forest", "Leeds" to "Leeds United", "Sheffield Utd" to "Sheffield United", "West Ham" to "West Ham United", "Newcastle" to "Newcastle United", "Tottenham" to "Tottenham Hotspur")
             val searchName = nameMap[teamName] ?: teamName
             val encodedName = URLEncoder.encode(searchName, "UTF-8")
             
@@ -145,24 +134,11 @@ class FootballViewModel : ViewModel() {
                     if (conn2.responseCode == 200) {
                         val json2 = JSONObject(conn2.inputStream.bufferedReader().readText())
                         
-                        // 2. Calculamos el promedio real recorriendo el historial (form)
-                        val formArray = json2.optJSONArray("form")
-                        if (formArray != null && formArray.length() > 0) {
-                            var sumCorners = 0.0; var sumCards = 0.0
-                            for (i in 0 until formArray.length()) {
-                                val match = formArray.getJSONObject(i)
-                                // Buscamos "corners" o "total_corners", etc.
-                                sumCorners += match.optDouble("corners", match.optDouble("total_corners", 0.0))
-                                sumCards += match.optDouble("cards", match.optDouble("yellow_cards", 0.0))
-                            }
-                            return Pair(sumCorners / formArray.length(), sumCards / formArray.length())
-                        } else {
-                            // Si no viene como array, intentamos buscar el promedio directo
-                            val corners = json2.optDouble("avg_corners", 0.0).takeIf { it > 0.0 }
-                            val cards = json2.optDouble("avg_cards", 0.0).takeIf { it > 0.0 }
-                            if (cards == null) {
-                                errorMsg = "Keys: " + json2.keys().asSequence().joinToString(",")
-                            }
+                        // 🔥 ACÁ ESTÁ LA MAGIA: Buscamos dentro de "overall"
+                        val overallObj = json2.optJSONObject("overall")
+                        if (overallObj != null) {
+                            val corners = overallObj.optDouble("corners", overallObj.optDouble("avg_corners", 0.0)).takeIf { it > 0.0 }
+                            val cards = overallObj.optDouble("cards", overallObj.optDouble("avg_cards", 0.0)).takeIf { it > 0.0 }
                             return Pair(corners, cards)
                         }
                     } else {
@@ -238,7 +214,7 @@ class FootballViewModel : ViewModel() {
 }
 
 // =============================================================
-// 4. INTERFAZ VISUAL CYBERPUNK (RESTAURADA)
+// 4. INTERFAZ VISUAL CYBERPUNK
 // =============================================================
 val DeepBg = Color(0xFF090D16); val GlassCard = Color(0xFF101726); val CyberBorder = Color(0xFF1D283E)
 val Cyan = Color(0xFF00F0FF); val BrightGreen = Color(0xFF00FF66); val BrightYellow = Color(0xFFFFE600)

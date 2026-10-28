@@ -26,12 +26,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 import java.util.Locale
 import kotlin.math.exp
 import kotlin.math.floor
@@ -47,7 +46,7 @@ data class MatchUi(val id: String, val h: String, val a: String, val hForm: List
 data class League(val code: String, val name: String, val tag: String)
 
 // =============================================================
-// 2. MOTOR MATEMÁTICO
+// 2. MOTOR MATEMÁTICO (INTACTO)
 // =============================================================
 object ParlayEngine {
     fun poissonPmf(k: Int, lambda: Double): Double {
@@ -90,7 +89,7 @@ object ParlayEngine {
 }
 
 // =============================================================
-// 3. VIEWMODEL (ESPN + BZZOIRO)
+// 3. VIEWMODEL (EXTRACCIÓN PROFUNDA DE ESPN)
 // =============================================================
 class FootballViewModel : ViewModel() {
     val leagues = listOf(League("arg.1","Argentina","ARG"), League("bra.1","Brasil","BRA"), League("esp.1","LaLiga","ESP"), League("eng.1","Premier","ENG"), League("uefa.champions","Champions","UCL"), League("mex.1","Liga MX","MEX"), League("uru.1","Uruguay","URU"), League("fra.1","Ligue 1","FRA"), League("por.1","Primeira","POR"), League("usa.1","MLS","MLS"))
@@ -99,73 +98,72 @@ class FootballViewModel : ViewModel() {
     var loading by mutableStateOf(false); private set
     var errorMsg by mutableStateOf<String?>(null); private set
 
-    // ⚠️ ACÁ VA TU NUEVA API KEY
-    private val bzzoiroApiKey = "Token 9665517ed1732bad524c3730e18cd9d90cc1d13f"
-
     init { fetchMatches(selLeague) }
     fun selectLeague(league: League) { selLeague = league; fetchMatches(league) }
     fun refresh() { fetchMatches(selLeague) }
 
-    private fun getTeamStats(teamName: String): Pair<Double?, Double?> {
+    // FUNCIÓN PARA EXTRAER LOS PROMEDIOS REALES DE LOS ÚLTIMOS 5 PARTIDOS
+    private fun getRealAverages(teamId: String, leagueCode: String): Pair<Double?, Double?> {
         try {
-            val nameMap = mapOf(
-                "Man Utd" to "Manchester United", "Man City" to "Manchester City",
-                "Nottm Forest" to "Nottingham Forest", "Leeds" to "Leeds United",
-                "Sheffield Utd" to "Sheffield United", "West Ham" to "West Ham United",
-                "Newcastle" to "Newcastle United", "Tottenham" to "Tottenham Hotspur",
-                "Estudiantes RC" to "Estudiantes Rio Cuarto", "Gimnasia LP" to "Gimnasia La Plata",
-                "Racing" to "Racing Club", "Newells" to "Newell's Old Boys"
-            )
-            val searchName = nameMap[teamName] ?: teamName
-            val encodedName = URLEncoder.encode(searchName, "UTF-8")
-            
-            val url = URL("https://sports.bzzoiro.com/api/v2/teams/?name=$encodedName")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("Authorization", bzzoiroApiKey)
-            conn.setRequestProperty("Accept", "application/json")
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
+            // 1. Buscamos el fixture del equipo
+            val scheduleUrl = URL("https://site.api.espn.com/apis/site/v2/sports/soccer/$leagueCode/teams/$teamId/schedule")
+            val scheduleJson = JSONObject(scheduleUrl.readText())
+            val events = scheduleJson.optJSONArray("events") ?: return Pair(null, null)
 
-            if (conn.responseCode == 200) {
-                val json1 = JSONObject(conn.inputStream.bufferedReader().readText())
-                val results = json1.optJSONArray("results") ?: json1.optJSONArray("data")
-                if (results != null && results.length() > 0) {
-                    val teamId = results.getJSONObject(0).optInt("id")
-                    val formUrl = URL("https://sports.bzzoiro.com/api/v2/teams/$teamId/form/")
-                    val conn2 = formUrl.openConnection() as HttpURLConnection
-                    conn2.requestMethod = "GET"
-                    conn2.setRequestProperty("Authorization", bzzoiroApiKey)
-                    conn2.setRequestProperty("Accept", "application/json")
+            var totalCorners = 0.0
+            var totalCards = 0.0
+            var validMatches = 0
 
-                    if (conn2.responseCode == 200) {
-                        val json2 = JSONObject(conn2.inputStream.bufferedReader().readText())
-                        
-                        // 🔥 BÚSQUEDA DINÁMICA EN LA CARPETA "STATS"
-                        val overallObj = json2.optJSONObject("overall")
-                        if (overallObj != null) {
-                            val statsObj = overallObj.optJSONObject("stats")
-                            if (statsObj != null) {
-                                var corners: Double? = null
-                                var cards: Double? = null
-                                val keys = statsObj.keys()
-                                while (keys.hasNext()) {
-                                    val key = keys.next()
-                                    if (key.contains("corner", ignoreCase = true)) {
-                                        corners = statsObj.optDouble(key)
-                                    }
-                                    if (key.contains("card", ignoreCase = true) && !key.contains("red", ignoreCase = true)) {
-                                        cards = statsObj.optDouble(key)
+            // 2. Recorremos los eventos (buscamos los últimos 5 jugados)
+            for (i in 0 until events.length()) {
+                if (validMatches >= 5) break // Solo los últimos 5
+                
+                val event = events.getJSONObject(i)
+                val comps = event.optJSONArray("competitions")?.getJSONObject(0) ?: continue
+                val status = comps.optJSONObject("status")?.optJSONObject("type")?.optString("state")
+                
+                if (status == "post") { // Si el partido ya se jugó
+                    val eventId = event.optString("id")
+                    
+                    // 3. Entramos al resumen del partido para buscar las estadísticas reales
+                    val summaryUrl = URL("https://site.api.espn.com/apis/site/v2/sports/soccer/$leagueCode/summary?event=$eventId")
+                    val summaryJson = JSONObject(summaryUrl.readText())
+                    
+                    val boxscoreTeams = summaryJson.optJSONObject("boxscore")?.optJSONArray("teams")
+                    if (boxscoreTeams != null) {
+                        for (t in 0 until boxscoreTeams.length()) {
+                            val teamObj = boxscoreTeams.getJSONObject(t)
+                            if (teamObj.optString("team", "").contains("\"id\":\"$teamId\"")) {
+                                // ¡Encontramos las estadísticas del equipo!
+                                val stats = teamObj.optJSONArray("statistics")
+                                if (stats != null) {
+                                    for (s in 0 until stats.length()) {
+                                        val stat = stats.getJSONObject(s)
+                                        val name = stat.optString("name", "").lowercase()
+                                        
+                                        // ESPN usa estos nombres internos
+                                        if (name == "woncorners" || name == "corners") {
+                                            totalCorners += stat.optString("displayValue", "0").toDoubleOrNull() ?: 0.0
+                                        }
+                                        if (name == "yellowcards") {
+                                            totalCards += stat.optString("displayValue", "0").toDoubleOrNull() ?: 0.0
+                                        }
                                     }
                                 }
-                                if (corners != null && cards != null) return Pair(corners, cards)
                             }
                         }
                     }
+                    validMatches++
+                    delay(200) // Pequeña pausa para no saturar a ESPN
                 }
             }
+
+            // 4. Calculamos el promedio
+            if (validMatches > 0) {
+                return Pair(totalCorners / validMatches, totalCards / validMatches)
+            }
         } catch (e: Exception) {
-            // Silencio, si falla devolvemos null
+            // Si falla, devolvemos null silenciosamente
         }
         return Pair(null, null)
     }
@@ -185,12 +183,17 @@ class FootballViewModel : ViewModel() {
                         if (comps.length() == 0) continue
                         val c = comps.getJSONObject(0)
                         val competitors = c.optJSONArray("competitors") ?: continue
-                        var h = "Local"; var a = "Visitante"; var hCp: JSONObject? = null; var aCp: JSONObject? = null
+                        
+                        var h = "Local"; var a = "Visitante"; var hId = ""; var aId = ""
+                        var hCp: JSONObject? = null; var aCp: JSONObject? = null
 
                         for (j in 0 until competitors.length()) {
                             val cp = competitors.getJSONObject(j)
-                            val name = cp.optJSONObject("team")?.optString("shortDisplayName", "")?.ifBlank { cp.optJSONObject("team")?.optString("displayName") } ?: "Equipo"
-                            if (cp.optString("homeAway") == "home") { h = name; hCp = cp } else { a = name; aCp = cp }
+                            val teamObj = cp.optJSONObject("team")
+                            val name = teamObj?.optString("shortDisplayName", "")?.ifBlank { teamObj.optString("displayName") } ?: "Equipo"
+                            val teamId = teamObj?.optString("id", "") ?: ""
+                            
+                            if (cp.optString("homeAway") == "home") { h = name; hId = teamId; hCp = cp } else { a = name; aId = teamId; aCp = cp }
                         }
 
                         val hFormRaw = hCp?.optString("form", "")?.uppercase() ?: ""
@@ -198,14 +201,13 @@ class FootballViewModel : ViewModel() {
                         val hForm = if (hFormRaw.length >= 5) hFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
                         val aForm = if (aFormRaw.length >= 5) aFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
 
-                        // Limpiamos el error por partido para que no se repita
-                        val (hCorners, hCards) = getTeamStats(h)
-                        val (aCorners, aCards) = getTeamStats(a)
+                        // 🔥 LLAMADA A LA EXTRACCIÓN PROFUNDA
+                        val (hCorners, hCards) = getRealAverages(hId, lg.code)
+                        val (aCorners, aCards) = getRealAverages(aId, lg.code)
 
                         val totalCorners = if (hCorners != null && aCorners != null) hCorners + aCorners else null
                         val totalCards = if (hCards != null && aCards != null) hCards + aCards else null
 
-                        // Mostramos N/D si no hay datos (sin mensajes de error largos)
                         val cardsStr = if (totalCards != null) String.format(Locale.US, "%.1f 🟨", totalCards) else "N/D"
                         val cornersStr = if (totalCorners != null) String.format(Locale.US, "%.1f", totalCorners) else "N/D"
 
@@ -230,7 +232,7 @@ class FootballViewModel : ViewModel() {
 }
 
 // =============================================================
-// 4. INTERFAZ VISUAL CYBERPUNK
+// 4. INTERFAZ VISUAL CYBERPUNK (INTACTA)
 // =============================================================
 val DeepBg = Color(0xFF090D16); val GlassCard = Color(0xFF101726); val CyberBorder = Color(0xFF1D283E)
 val Cyan = Color(0xFF00F0FF); val BrightGreen = Color(0xFF00FF66); val BrightYellow = Color(0xFFFFE600)

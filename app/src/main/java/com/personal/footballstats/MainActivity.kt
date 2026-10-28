@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,7 +41,7 @@ import kotlin.math.pow
 import kotlin.math.round
 
 // -------------------------------------------------------------
-// 1. DATA CLASSES
+// 1. MODELOS DE DATOS
 // -------------------------------------------------------------
 data class ParlayLeg(
     val category: String,       // "GOLES", "CÓRNERS", "TARJETAS", "DOBLE OP", "JUGADOR"
@@ -89,7 +90,7 @@ object ParlayEngine {
         if (lambda <= 0.0) return 0.0
         var fact = 1.0
         for (i in 1..k) fact *= i.toDouble()
-        return (lambda.pow(i = k.toDouble()) * exp(-lambda)) / fact
+        return (lambda.pow(k.toDouble()) * exp(-lambda)) / fact
     }
 
     fun poissonOver(threshold: Double, lambda: Double): Double {

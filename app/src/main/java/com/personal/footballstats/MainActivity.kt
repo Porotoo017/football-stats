@@ -102,8 +102,8 @@ class FootballViewModel : ViewModel() {
     fun selectLeague(league: League) { selLeague = league; fetchMatches(league) }
     fun refresh() { fetchMatches(selLeague) }
 
-    // FUNCIÓN PARA EXTRAER LOS PROMEDIOS REALES DE LOS ÚLTIMOS 5 PARTIDOS
-    private fun getRealAverages(teamId: String, leagueCode: String): Pair<Double?, Double?> {
+    // 🔥 FUNCIÓN CORREGIDA CON "suspend"
+    private suspend fun getRealAverages(teamId: String, leagueCode: String): Pair<Double?, Double?> {
         try {
             // 1. Buscamos el fixture del equipo
             val scheduleUrl = URL("https://site.api.espn.com/apis/site/v2/sports/soccer/$leagueCode/teams/$teamId/schedule")
@@ -116,7 +116,7 @@ class FootballViewModel : ViewModel() {
 
             // 2. Recorremos los eventos (buscamos los últimos 5 jugados)
             for (i in 0 until events.length()) {
-                if (validMatches >= 5) break // Solo los últimos 5
+                if (validMatches >= 5) break 
                 
                 val event = events.getJSONObject(i)
                 val comps = event.optJSONArray("competitions")?.getJSONObject(0) ?: continue
@@ -125,7 +125,7 @@ class FootballViewModel : ViewModel() {
                 if (status == "post") { // Si el partido ya se jugó
                     val eventId = event.optString("id")
                     
-                    // 3. Entramos al resumen del partido para buscar las estadísticas reales
+                    // 3. Entramos al resumen del partido
                     val summaryUrl = URL("https://site.api.espn.com/apis/site/v2/sports/soccer/$leagueCode/summary?event=$eventId")
                     val summaryJson = JSONObject(summaryUrl.readText())
                     
@@ -133,15 +133,16 @@ class FootballViewModel : ViewModel() {
                     if (boxscoreTeams != null) {
                         for (t in 0 until boxscoreTeams.length()) {
                             val teamObj = boxscoreTeams.getJSONObject(t)
-                            if (teamObj.optString("team", "").contains("\"id\":\"$teamId\"")) {
-                                // ¡Encontramos las estadísticas del equipo!
+                            // 🔥 Leer el ID del equipo correctamente
+                            val teamIdFromJson = teamObj.optJSONObject("team")?.optString("id") ?: ""
+                            
+                            if (teamIdFromJson == teamId) {
                                 val stats = teamObj.optJSONArray("statistics")
                                 if (stats != null) {
                                     for (s in 0 until stats.length()) {
                                         val stat = stats.getJSONObject(s)
                                         val name = stat.optString("name", "").lowercase()
                                         
-                                        // ESPN usa estos nombres internos
                                         if (name == "woncorners" || name == "corners") {
                                             totalCorners += stat.optString("displayValue", "0").toDoubleOrNull() ?: 0.0
                                         }
@@ -154,16 +155,15 @@ class FootballViewModel : ViewModel() {
                         }
                     }
                     validMatches++
-                    delay(200) // Pequeña pausa para no saturar a ESPN
+                    delay(200) // Pausa para no saturar a ESPN
                 }
             }
 
-            // 4. Calculamos el promedio
             if (validMatches > 0) {
                 return Pair(totalCorners / validMatches, totalCards / validMatches)
             }
         } catch (e: Exception) {
-            // Si falla, devolvemos null silenciosamente
+            // Si falla, devolvemos null
         }
         return Pair(null, null)
     }

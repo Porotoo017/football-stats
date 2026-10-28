@@ -346,7 +346,11 @@ class FootballViewModel : ViewModel() {
                         val totalCornersLambda = if (hCorners != null && aCorners != null) hCorners + aCorners else null
                         val totalCardsLambda = if (hCards != null && aCards != null) hCards + aCards else null
 
-                        val cardsStr = if (totalCardsLambda != null) String.format(Locale.US, "%.1f 🟨", totalCardsLambda) else "Promedio: N/D"
+                        val cardsStr = if (totalCardsLambda != null) {
+    String.format(Locale.US, "%.1f 🟨", totalCardsLambda)
+} else {
+    errorMsg ?: "Promedio: N/D"
+}
                         val cornersStr = if (totalCornersLambda != null) String.format(Locale.US, "%.1f", totalCornersLambda) else "Promedio: N/D"
 
                         var fav = "N/D"

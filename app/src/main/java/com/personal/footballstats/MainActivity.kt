@@ -48,7 +48,7 @@ data class MatchUi(val id: String, val h: String, val a: String, val hForm: List
 data class League(val code: String, val name: String, val tag: String)
 
 // =============================================================
-// 2. MOTOR MATEMÁTICO (CERO MENTIRAS)
+// 2. MOTOR MATEMÁTICO
 // =============================================================
 object ParlayEngine {
     fun poissonPmf(k: Int, lambda: Double): Double {
@@ -91,7 +91,7 @@ object ParlayEngine {
 }
 
 // =============================================================
-// 3. VIEWMODEL (ESPN + BZZOIRO)
+// 3. VIEWMODEL (ESPN + BZZOIRO CON TRADUCTOR Y PROMEDIOS)
 // =============================================================
 class FootballViewModel : ViewModel() {
     val leagues = listOf(League("arg.1","Argentina","ARG"), League("bra.1","Brasil","BRA"), League("esp.1","LaLiga","ESP"), League("eng.1","Premier","ENG"), League("uefa.champions","Champions","UCL"), League("mex.1","Liga MX","MEX"), League("uru.1","Uruguay","URU"), League("fra.1","Ligue 1","FRA"), League("por.1","Primeira","POR"), League("usa.1","MLS","MLS"))
@@ -108,55 +108,77 @@ class FootballViewModel : ViewModel() {
     fun refresh() { fetchMatches(selLeague) }
 
     private fun getTeamStats(teamName: String): Pair<Double?, Double?> {
-    try {
-        val encodedName = URLEncoder.encode(teamName, "UTF-8")
-        val url = URL("https://sports.bzzoiro.com/api/v2/teams/?name=$encodedName")
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "GET"
-        conn.setRequestProperty("Authorization", bzzoiroApiKey)
-        conn.setRequestProperty("Accept", "application/json")
-        conn.connectTimeout = 5000
-        conn.readTimeout = 5000
+        try {
+            // 1. Traductor de nombres de ESPN a Bzzoiro
+            val nameMap = mapOf(
+                "Man Utd" to "Manchester United",
+                "Man City" to "Manchester City",
+                "Nottm Forest" to "Nottingham Forest",
+                "Leeds" to "Leeds United",
+                "Sheffield Utd" to "Sheffield United",
+                "West Ham" to "West Ham United",
+                "Newcastle" to "Newcastle United",
+                "Tottenham" to "Tottenham Hotspur"
+            )
+            val searchName = nameMap[teamName] ?: teamName
+            val encodedName = URLEncoder.encode(searchName, "UTF-8")
+            
+            val url = URL("https://sports.bzzoiro.com/api/v2/teams/?name=$encodedName")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Authorization", bzzoiroApiKey)
+            conn.setRequestProperty("Accept", "application/json")
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
 
-        if (conn.responseCode == 200) {
-            val json1 = JSONObject(conn.inputStream.bufferedReader().readText())
-            val results = json1.optJSONArray("results") ?: json1.optJSONArray("data")
-            if (results != null && results.length() > 0) {
-                val teamId = results.getJSONObject(0).optInt("id")
-                val formUrl = URL("https://sports.bzzoiro.com/api/v2/teams/$teamId/form/")
-                val conn2 = formUrl.openConnection() as HttpURLConnection
-                conn2.requestMethod = "GET"
-                conn2.setRequestProperty("Authorization", bzzoiroApiKey)
-                conn2.setRequestProperty("Accept", "application/json")
+            if (conn.responseCode == 200) {
+                val json1 = JSONObject(conn.inputStream.bufferedReader().readText())
+                val results = json1.optJSONArray("results") ?: json1.optJSONArray("data")
+                if (results != null && results.length() > 0) {
+                    val teamId = results.getJSONObject(0).optInt("id")
+                    val formUrl = URL("https://sports.bzzoiro.com/api/v2/teams/$teamId/form/")
+                    val conn2 = formUrl.openConnection() as HttpURLConnection
+                    conn2.requestMethod = "GET"
+                    conn2.setRequestProperty("Authorization", bzzoiroApiKey)
+                    conn2.setRequestProperty("Accept", "application/json")
 
-                if (conn2.responseCode == 200) {
-                    val response2 = conn2.inputStream.bufferedReader().readText()
-                    val json2 = JSONObject(response2)
-                    
-                    // Buscamos los datos con los nombres que creemos que tienen
-                    val corners = json2.optDouble("avg_corners", 0.0).takeIf { it > 0.0 }
-                    val cards = json2.optDouble("avg_cards", 0.0).takeIf { it > 0.0 }
-                    
-                    // SI NO ENCUENTRA LOS DATOS, NOS MUESTRA EL TEXTO DEL JSON EN PANTALLA
-                    if (cards == null) {
-                        errorMsg = json2.toString().take(40) // Muestra los primeros 40 caracteres
+                    if (conn2.responseCode == 200) {
+                        val json2 = JSONObject(conn2.inputStream.bufferedReader().readText())
+                        
+                        // 2. Calculamos el promedio real recorriendo el historial (form)
+                        val formArray = json2.optJSONArray("form")
+                        if (formArray != null && formArray.length() > 0) {
+                            var sumCorners = 0.0; var sumCards = 0.0
+                            for (i in 0 until formArray.length()) {
+                                val match = formArray.getJSONObject(i)
+                                // Buscamos "corners" o "total_corners", etc.
+                                sumCorners += match.optDouble("corners", match.optDouble("total_corners", 0.0))
+                                sumCards += match.optDouble("cards", match.optDouble("yellow_cards", 0.0))
+                            }
+                            return Pair(sumCorners / formArray.length(), sumCards / formArray.length())
+                        } else {
+                            // Si no viene como array, intentamos buscar el promedio directo
+                            val corners = json2.optDouble("avg_corners", 0.0).takeIf { it > 0.0 }
+                            val cards = json2.optDouble("avg_cards", 0.0).takeIf { it > 0.0 }
+                            if (cards == null) {
+                                errorMsg = "Keys: " + json2.keys().asSequence().joinToString(",")
+                            }
+                            return Pair(corners, cards)
+                        }
+                    } else {
+                        errorMsg = "Err Stats: ${conn2.responseCode}"
                     }
-                    
-                    return Pair(corners, cards)
                 } else {
-                    errorMsg = "Error Stats: ${conn2.responseCode}"
+                    errorMsg = "No existe: $teamName"
                 }
             } else {
-                errorMsg = "No existe: $teamName"
+                errorMsg = "Err API: ${conn.responseCode}"
             }
-        } else {
-            errorMsg = "Error API: ${conn.responseCode}"
+        } catch (e: Exception) {
+            errorMsg = "Red: ${e.message?.take(10)}"
         }
-    } catch (e: Exception) {
-        errorMsg = "Red: ${e.message?.take(10)}"
+        return Pair(null, null)
     }
-    return Pair(null, null)
-}
 
     private fun fetchMatches(lg: League) {
         viewModelScope.launch {
@@ -216,7 +238,7 @@ class FootballViewModel : ViewModel() {
 }
 
 // =============================================================
-// 4. INTERFAZ VISUAL (RESTAURADA CYBERPUNK)
+// 4. INTERFAZ VISUAL CYBERPUNK (RESTAURADA)
 // =============================================================
 val DeepBg = Color(0xFF090D16); val GlassCard = Color(0xFF101726); val CyberBorder = Color(0xFF1D283E)
 val Cyan = Color(0xFF00F0FF); val BrightGreen = Color(0xFF00FF66); val BrightYellow = Color(0xFFFFE600)
@@ -291,7 +313,6 @@ fun CyberMatch(m: MatchUi) {
             }
             Spacer(modifier = Modifier.height(5.dp))
             
-            // HUD DEL PARLAY
             Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xCC0B101D), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Brush.linearGradient(listOf(Cyan.copy(0.6f), Rose.copy(0.6f))))) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

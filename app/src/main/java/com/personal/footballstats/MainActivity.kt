@@ -213,7 +213,7 @@ class FootballViewModel : ViewModel() {
         private set
 
     // ⚠️ PEGÁ TU API KEY DE BZZOIRO ACÁ ADENTRO DE LAS COMILLAS
-    private val bzzoiroApiKey = "Token 43a636ad81ee62d5405870e963ed55ab694e7408"
+    private val bzzoiroApiKey = "Token 9665517ed1732bad524c3730e18cd9d90cc1d13f"
 
     init {
         fetchMatches(selLeague)

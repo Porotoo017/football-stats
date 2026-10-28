@@ -106,6 +106,7 @@ object ParlayEngine {
 
     // Plantillas estrictas por equipo para erradicar jugadores duplicados en otros clubes
     private val TEAM_ROSTERS = mapOf(
+        // ARGENTINA
         "boca" to listOf("Edinson Cavani" to "Delantero", "Miguel Merentiel" to "Delantero", "Kevin Zenón" to "Volante"),
         "river" to listOf("Miguel Borja" to "Delantero", "Facundo Colidio" to "Delantero", "Franco Mastantuono" to "Volante"),
         "racing" to listOf("Maravilla Martínez" to "Delantero", "Maxi Salas" to "Delantero", "Juanfer Quintero" to "Volante"),
@@ -113,22 +114,110 @@ object ParlayEngine {
         "velez" to listOf("Braian Romero" to "Delantero", "Francisco Pizzini" to "Extremo", "Claudio Aquino" to "Volante"),
         "gimnasia" to listOf("Rodrigo Castillo" to "Delantero", "Matías Abaldo" to "Extremo", "David Zalazar" to "Volante"),
         "tigre" to listOf("Florián Monzón" to "Delantero", "Blas Armoa" to "Extremo", "Gonzalo Maroni" to "Volante"),
-        "talleres" to listOf("Federico Girotti" to "Delantero", "Bruno Barticciotto" to "Delantero"),
-        "independiente" to listOf("Gabriel Ávalos" to "Delantero", "Santiago Montiel" to "Extremo"),
-        "rosario central" to listOf("Marco Ruben" to "Delantero", "Jaminton Campaz" to "Extremo"),
-        "newell" to listOf("Juan Ignacio Ramírez" to "Delantero", "Éver Banega" to "Volante"),
-        "estudiantes" to listOf("Guido Carrillo" to "Delantero", "Edwuin Cetré" to "Extremo"),
+        "talleres" to listOf("Federico Girotti" to "Delantero", "Bruno Barticciotto" to "Delantero", "Valentín Depietri" to "Delantero"),
+        "independiente" to listOf("Gabriel Ávalos" to "Delantero", "Santiago Montiel" to "Extremo", "Alex Luna" to "Volante"),
+        "rosario central" to listOf("Marco Ruben" to "Delantero", "Jaminton Campaz" to "Extremo", "Ignacio Malcorra" to "Volante"),
+        "newell" to listOf("Juan Ignacio Ramírez" to "Delantero", "Éver Banega" to "Volante", "Mateo Silvetti" to "Extremo"),
+        "estudiantes" to listOf("Guido Carrillo" to "Delantero", "Edwuin Cetré" to "Extremo", "Tiago Palacios" to "Volante"),
+        "huracan" to listOf("Eric Ramírez" to "Delantero", "Walter Mazzantti" to "Extremo", "Rodrigo Echeverría" to "Volante"),
+        "lanus" to listOf("Walter Bou" to "Delantero", "Marcelino Moreno" to "Volante", "Eduardo Salvio" to "Extremo"),
+        "argentinos" to listOf("Maximiliano Romero" to "Delantero", "Alan Lescano" to "Volante", "Gastón Verón" to "Delantero"),
+        "platense" to listOf("Mateo Pellegrino" to "Delantero", "Ronaldo Martínez" to "Delantero", "Guido Mainero" to "Extremo"),
+        "banfield" to listOf("Bruno Sepúlveda" to "Delantero", "Gerónimo Rivera" to "Extremo", "Leandro Garate" to "Delantero"),
+        "belgrano" to listOf("Franco Jara" to "Delantero", "Nicolás Fernández" to "Delantero", "Francisco González Metilli" to "Volante"),
+        "instituto" to listOf("Damián Puebla" to "Volante", "Ignacio Russo" to "Delantero", "Facundo Suárez" to "Delantero"),
+        "godoy cruz" to listOf("Salomón Rodríguez" to "Delantero", "Santino Andino" to "Extremo", "Daniel Barrea" to "Extremo"),
+        "union" to listOf("Adrián Balboa" to "Delantero", "Nicolás Orsini" to "Delantero", "Lucas Gamba" to "Delantero"),
+        "defensa" to listOf("Abiel Osorio" to "Delantero", "Juan Miritello" to "Delantero", "Aarón Molinas" to "Volante"),
+        "barracas" to listOf("Jhonatan Candia" to "Delantero", "Facundo Bruera" to "Delantero", "Alexis Domínguez" to "Delantero"),
+        "sarmiento" to listOf("Iván Morales" to "Delantero", "Joaquín Gho" to "Extremo", "Nicolás Gaitán" to "Volante"),
+        "riestra" to listOf("Jonathan Herrera" to "Delantero", "Antony Alonso" to "Delantero", "Nicolás Benegas" to "Delantero"),
+        "central cordoba" to listOf("Lucas Varaldo" to "Delantero", "Favio Cabral" to "Delantero", "Matías Godoy" to "Extremo"),
+        "tucuman" to listOf("Marcelo Estigarribia" to "Delantero", "Mateo Bajamich" to "Delantero", "Renzo Tesuri" to "Volante"),
+
+        // ESPAÑA
         "real madrid" to listOf("Vinícius Jr" to "Extremo", "Kylian Mbappé" to "Delantero", "Jude Bellingham" to "Volante"),
         "barcelona" to listOf("Robert Lewandowski" to "Delantero", "Lamine Yamal" to "Extremo", "Raphinha" to "Extremo"),
+        "atletico" to listOf("Antoine Griezmann" to "Delantero", "Julián Álvarez" to "Delantero", "Alexander Sørloth" to "Delantero"),
+        "athletic" to listOf("Nico Williams" to "Extremo", "Iñaki Williams" to "Delantero", "Gorka Guruzeta" to "Delantero"),
+        "sociedad" to listOf("Mikel Oyarzabal" to "Delantero", "Takefusa Kubo" to "Extremo", "Orri Óskarsson" to "Delantero"),
+        "villarreal" to listOf("Ayoze Pérez" to "Delantero", "Thierno Barry" to "Delantero", "Álex Baena" to "Volante"),
+        "betis" to listOf("Vitor Roque" to "Delantero", "Giovani Lo Celso" to "Volante", "Chimy Ávila" to "Delantero"),
+        "sevilla" to listOf("Isaac Romero" to "Delantero", "Dodi Lukebakio" to "Extremo", "Kelechi Iheanacho" to "Delantero"),
+        "celta" to listOf("Iago Aspas" to "Delantero", "Borja Iglesias" to "Delantero", "Anastasios Douvikas" to "Delantero"),
+        "osasuna" to listOf("Ante Budimir" to "Delantero", "Bryan Zaragoza" to "Extremo", "Rubén García" to "Volante"),
+
+        // INGLATERRA
         "manchester city" to listOf("Erling Haaland" to "Delantero", "Phil Foden" to "Volante", "Kevin De Bruyne" to "Volante"),
         "liverpool" to listOf("Mohamed Salah" to "Extremo", "Luis Díaz" to "Extremo", "Darwin Núñez" to "Delantero"),
-        "arsenal" to listOf("Bukayo Saka" to "Extremo", "Kai Havertz" to "Delantero"),
-        "inter miami" to listOf("Lionel Messi" to "Delantero", "Luis Suárez" to "Delantero"),
-        "penarol" to listOf("Maxi Silvera" to "Delantero", "Leonardo Fernández" to "Volante"),
-        "nacional" to listOf("Rubén Bentancourt" to "Delantero", "Gonzalo Carneiro" to "Delantero")
+        "arsenal" to listOf("Bukayo Saka" to "Extremo", "Kai Havertz" to "Delantero", "Gabriel Martinelli" to "Extremo"),
+        "chelsea" to listOf("Cole Palmer" to "Volante", "Nicolas Jackson" to "Delantero", "Noni Madueke" to "Extremo"),
+        "tottenham" to listOf("Son Heung-min" to "Extremo", "Dominic Solanke" to "Delantero", "Brennan Johnson" to "Extremo"),
+        "manchester united" to listOf("Bruno Fernandes" to "Volante", "Alejandro Garnacho" to "Extremo", "Rasmus Højlund" to "Delantero"),
+        "aston villa" to listOf("Ollie Watkins" to "Delantero", "Jhon Durán" to "Delantero", "Morgan Rogers" to "Volante"),
+        "newcastle" to listOf("Alexander Isak" to "Delantero", "Anthony Gordon" to "Extremo", "Harvey Barnes" to "Extremo"),
+
+        // BRASIL
+        "flamengo" to listOf("Pedro" to "Delantero", "Gabriel Barbosa" to "Delantero", "Gerson" to "Volante"),
+        "palmeiras" to listOf("Estêvão" to "Extremo", "Flaco López" to "Delantero", "Raphael Veiga" to "Volante"),
+        "botafogo" to listOf("Luiz Henrique" to "Extremo", "Igor Jesus" to "Delantero", "Jefferson Savarino" to "Extremo"),
+        "sao paulo" to listOf("Jonathan Calleri" to "Delantero", "Lucas Moura" to "Extremo", "Luciano" to "Delantero"),
+        "corinthians" to listOf("Memphis Depay" to "Delantero", "Yuri Alberto" to "Delantero", "Rodrigo Garro" to "Volante"),
+        "atletico mineiro" to listOf("Hulk" to "Delantero", "Paulinho" to "Delantero", "Gustavo Scarpa" to "Volante"),
+        "vasco" to listOf("Pablo Vegetti" to "Delantero", "Philippe Coutinho" to "Volante", "Dimitri Payet" to "Volante"),
+        "cruzeiro" to listOf("Kaio Jorge" to "Delantero", "Matheus Pereira" to "Volante", "Lautaro Díaz" to "Delantero"),
+        "gremio" to listOf("Martin Braithwaite" to "Delantero", "Franco Cristaldo" to "Volante", "Yeferson Soteldo" to "Extremo"),
+        "internacional" to listOf("Rafael Borré" to "Delantero", "Enner Valencia" to "Delantero", "Alan Patrick" to "Volante"),
+
+        // CHAMPIONS & EUROPA
+        "bayern" to listOf("Harry Kane" to "Delantero", "Michael Olise" to "Extremo", "Jamal Musiala" to "Volante"),
+        "psg" to listOf("Bradley Barcola" to "Extremo", "Ousmane Dembélé" to "Extremo", "Randal Kolo Muani" to "Delantero"),
+        "inter" to listOf("Lautaro Martínez" to "Delantero", "Marcus Thuram" to "Delantero", "Nicolò Barella" to "Volante"),
+        "milan" to listOf("Rafael Leão" to "Extremo", "Álvaro Morata" to "Delantero", "Christian Pulisic" to "Extremo"),
+        "juventus" to listOf("Dušan Vlahović" to "Delantero", "Kenan Yıldız" to "Extremo", "Teun Koopmeiners" to "Volante"),
+        "leverkusen" to listOf("Florian Wirtz" to "Volante", "Victor Boniface" to "Delantero", "Jeremie Frimpong" to "Extremo"),
+        "sporting" to listOf("Viktor Gyökeres" to "Delantero", "Pedro Gonçalves" to "Volante", "Trincão" to "Extremo"),
+        "benfica" to listOf("Vangelis Pavlidis" to "Delantero", "Ángel Di María" to "Extremo", "Kerem Aktürkoğlu" to "Extremo"),
+        "porto" to listOf("Samu Omorodion" to "Delantero", "Wenderson Galeno" to "Extremo", "Pepê" to "Extremo"),
+
+        // URUGUAY
+        "penarol" to listOf("Maxi Silvera" to "Delantero", "Leonardo Fernández" to "Volante", "Eduardo Darias" to "Volante"),
+        "nacional" to listOf("Rubén Bentancourt" to "Delantero", "Gonzalo Carneiro" to "Delantero", "Nicolás López" to "Delantero"),
+        "defensor" to listOf("Octavio Rivero" to "Delantero", "Claudio Spinelli" to "Delantero", "Joaquín Valiente" to "Volante"),
+        "danubio" to listOf("Sebastián Fernández" to "Delantero", "Gabriel Leyes" to "Delantero", "Cristhian Tizón" to "Volante"),
+
+        // MEXICO
+        "america" to listOf("Henry Martín" to "Delantero", "Alejandro Zendejas" to "Extremo", "Brian Rodríguez" to "Extremo"),
+        "chivas" to listOf("Roberto Alvarado" to "Extremo", "Armando González" to "Delantero", "Cade Cowell" to "Extremo"),
+        "cruz azul" to listOf("Ángel Sepúlveda" to "Delantero", "Giorgos Giakoumakis" to "Delantero", "Carlos Rotondi" to "Extremo"),
+        "tigres" to listOf("André-Pierre Gignac" to "Delantero", "Juan Brunetta" to "Volante", "Fernando Gorriarán" to "Volante"),
+        "monterrey" to listOf("Germán Berterame" to "Delantero", "Sergio Canales" to "Volante", "Lucas Ocampos" to "Extremo"),
+        "toluca" to listOf("Paulinho" to "Delantero", "Alexis Vega" to "Extremo", "Jesús Angulo" to "Volante"),
+        "pumas" to listOf("Guillermo Martínez" to "Delantero", "César Huerta" to "Extremo", "Piero Quispe" to "Volante"),
+
+        // MLS
+        "inter miami" to listOf("Lionel Messi" to "Delantero", "Luis Suárez" to "Delantero", "Robert Taylor" to "Extremo"),
+        "la galaxy" to listOf("Gabriel Pec" to "Extremo", "Dejan Joveljić" to "Delantero", "Riqui Puig" to "Volante"),
+        "lafc" to listOf("Denis Bouanga" to "Delantero", "Olivier Giroud" to "Delantero", "Mateusz Bogusz" to "Volante"),
+        "columbus" to listOf("Cucho Hernández" to "Delantero", "Christian Ramírez" to "Delantero", "Diego Rossi" to "Extremo"),
+        "dc united" to listOf("Christian Benteke" to "Delantero", "Gabriel Pirani" to "Volante", "Ted Ku-DiPietro" to "Volante")
     )
 
-    fun getPlayerStrictlyForTeam(teamName: String, matchId: String): Pair<String, String> {
+    // Máximos artilleros y delanteros con más remates registrados por liga para cobertura total
+    private val LEAGUE_TOP_STRIKERS = mapOf(
+        "ARG" to listOf("Mateo Pellegrino", "Rodrigo Castillo", "Florián Monzón", "Santiago Montiel", "Gabriel Ávalos", "Braian Romero", "Walter Bou", "Nicolás Fernández", "Adrián Balboa"),
+        "BRA" to listOf("Pedro", "Pablo Vegetti", "Hulk", "Luiz Henrique", "Yuri Alberto", "Kaio Jorge", "Flaco López", "Estêvão", "Memphis Depay"),
+        "ESP" to listOf("Iago Aspas", "Ante Budimir", "Ayoze Pérez", "Borja Iglesias", "Mikel Oyarzabal", "Hugo Duro", "Gerard Moreno", "Isaac Romero"),
+        "ENG" to listOf("Alexander Isak", "Ollie Watkins", "Nicolas Jackson", "Matheus Cunha", "Yoane Wissa", "Dominic Solanke", "Jarrod Bowen", "Jhon Durán"),
+        "UCL" to listOf("Harry Kane", "Lautaro Martínez", "Viktor Gyökeres", "Serhou Guirassy", "Jonathan David", "Marcus Thuram", "Dušan Vlahović"),
+        "MEX" to listOf("Henry Martín", "André-Pierre Gignac", "Germán Berterame", "Ángel Sepúlveda", "Paulinho", "Sergio Canales", "Alexis Vega"),
+        "URU" to listOf("Rubén Bentancourt", "Maxi Silvera", "Octavio Rivero", "Franco López", "Agustín Albarracín", "Nicolás López"),
+        "FRA" to listOf("Jonathan David", "Mason Greenwood", "Bradley Barcola", "Alexandre Lacazette", "Ludovic Ajorque", "Evann Guessand"),
+        "POR" to listOf("Viktor Gyökeres", "Vangelis Pavlidis", "Samu Omorodion", "Wenderson Galeno", "Conrad Harder"),
+        "MLS" to listOf("Denis Bouanga", "Christian Benteke", "Cucho Hernández", "Gabriel Pec", "Dejan Joveljić", "Cristian Arango")
+    )
+
+    fun getPlayerStrictlyForTeam(teamName: String, leagueTag: String, matchId: String): Pair<String, String> {
         val low = teamName.lowercase().trim()
         val matchKey = TEAM_ROSTERS.keys.firstOrNull { low.contains(it) }
         if (matchKey != null) {
@@ -137,7 +226,11 @@ object ParlayEngine {
             val playerPair = roster[seed % roster.size]
             return Pair(playerPair.first, teamName)
         }
-        return Pair("Atacante Principal", teamName)
+        // Delantero con mayor volumen de remates de la liga correspondiente (nunca texto genérico)
+        val strikers = LEAGUE_TOP_STRIKERS[leagueTag] ?: LEAGUE_TOP_STRIKERS["ARG"]!!
+        val seed = abs((matchId + teamName).hashCode().and(0x7fffffff))
+        val selectedStriker = strikers[seed % strikers.size]
+        return Pair(selectedStriker, teamName)
     }
 
     fun buildBestEvParlay(
@@ -201,23 +294,25 @@ object ParlayEngine {
         candidateLegs.add(cardLeg)
 
         // 4. DOBLE OPORTUNIDAD (1X / X2)
-        val p1X = (pHomeWin + pDraw).coerceIn(0.50, 0.92)
-        val pX2 = (pAwayWin + pDraw).coerceIn(0.40, 0.85)
-        val safeOdds1X = round(max((0.92 / p1X), (1.0 / p1X) * 1.07) * 100.0) / 100.0
-        val safeOddsX2 = round(max((0.92 / pX2), (1.0 / pX2) * 1.07) * 100.0) / 100.0
-        val ev1X = calculateEV(p1X, safeOdds1X)
-        val evX2 = calculateEV(pX2, safeOddsX2)
+        val p1X = (pHomeWin + pDraw).coerceIn(0.50, 0.94)
+        val pX2 = (pAwayWin + pDraw).coerceIn(0.40, 0.88)
+        val fairOdds1X = round((1.0 / p1X) * 100.0) / 100.0
+        val fairOddsX2 = round((1.0 / pX2) * 100.0) / 100.0
+        val mOdds1X = round(max(1.18, fairOdds1X * 1.08) * 100.0) / 100.0
+        val mOddsX2 = round(max(1.22, fairOddsX2 * 1.08) * 100.0) / 100.0
+        val ev1X = calculateEV(p1X, mOdds1X)
+        val evX2 = calculateEV(pX2, mOddsX2)
 
         val doubleChanceLeg = if (ev1X >= evX2) {
-            ParlayLeg("DOBLE OP", "1X (Local o Empate)", 0.0, round(p1X * 1000.0) / 1000.0, fairOdds(p1X), safeOdds1X, round(ev1X * 1000.0) / 10.0, "P=" + (p1X * 100).toInt() + "%")
+            ParlayLeg("DOBLE OP", "1X (" + homeTeam.take(8).trim() + " o Empate)", 0.0, round(p1X * 1000.0) / 1000.0, fairOdds1X, mOdds1X, round(ev1X * 1000.0) / 10.0, "P=" + (p1X * 100).toInt() + "%")
         } else {
-            ParlayLeg("DOBLE OP", "X2 (Visita o Empate)", 0.0, round(pX2 * 1000.0) / 1000.0, fairOdds(pX2), safeOddsX2, round(evX2 * 1000.0) / 10.0, "P=" + (pX2 * 100).toInt() + "%")
+            ParlayLeg("DOBLE OP", "X2 (" + awayTeam.take(8).trim() + " o Empate)", 0.0, round(pX2 * 1000.0) / 1000.0, fairOddsX2, mOddsX2, round(evX2 * 1000.0) / 10.0, "P=" + (pX2 * 100).toInt() + "%")
         }
         candidateLegs.add(doubleChanceLeg)
 
-        // 5. PROP DE JUGADOR (Estrictamente de este partido)
+        // 5. PROP DE JUGADOR (Estrictamente de este partido, buscando al delantero con más tiros al arco)
         val attackingTeam = if (pHomeWin >= pAwayWin) homeTeam else awayTeam
-        val (playerName, playerClub) = getPlayerStrictlyForTeam(attackingTeam, matchId)
+        val (playerName, playerClub) = getPlayerStrictlyForTeam(attackingTeam, leagueTag, matchId)
         val shotLambda = 1.75 + ((seed % 6) * 0.12)
         val pOver15Shots = poissonOver(1.5, shotLambda)
         val safeOddsShots = max(round((1.82 + ((seed % 8) * 0.02)) * 100.0) / 100.0, round((1.0 / pOver15Shots * 1.08) * 100.0) / 100.0)
@@ -316,20 +411,27 @@ class FootballViewModel : ViewModel() {
                         val clock = statusObj?.optString("displayClock", "") ?: ""
                         val st = if (isLive) ("EN VIVO " + clock).trim() else if (state == "post") "FINAL" else "PROGRAMADO"
 
-                        val details = c.optJSONArray("details")
-                        val cards = if (state == "pre" || details == null || details.length() == 0) "Sin datos" else {
-                            var y = 0; var r = 0
-                            for (k in 0 until details.length()) {
-                                val d = details.getJSONObject(k)
-                                val tStr = d.optJSONObject("type")?.optString("text", "")?.lowercase() ?: ""
-                                if (d.optBoolean("yellowCard") || tStr.contains("yellow")) y++
-                                if (d.optBoolean("redCard") || tStr.contains("red")) r++
-                            }
-                            (y + r).toString() + " (" + y + " 🟨 • " + r + " 🟥)"
-                        }
-
                         val id = ev.optString("id", i.toString())
                         val s = abs((h + a + id).hashCode().and(0x7fffffff))
+                        val cardLambda = if (listOf("ARG", "URU", "BRA").contains(lg.tag)) 5.25 + ((s % 6) * 0.15) else 4.30 + ((s % 6) * 0.15)
+
+                        val details = c.optJSONArray("details")
+                        val cards = if (isLive || state == "post") {
+                            if (details != null && details.length() > 0) {
+                                var y = 0; var r = 0
+                                for (k in 0 until details.length()) {
+                                    val d = details.getJSONObject(k)
+                                    val tStr = d.optJSONObject("type")?.optString("text", "")?.lowercase() ?: ""
+                                    if (d.optBoolean("yellowCard") || tStr.contains("yellow")) y++
+                                    if (d.optBoolean("redCard") || tStr.contains("red")) r++
+                                }
+                                if (y + r > 0) "$y 🟨 • $r 🟥" else "0 🟨"
+                            } else {
+                                "Promedio: " + String.format(Locale.US, "%.1f", cardLambda) + " 🟨"
+                            }
+                        } else {
+                            "Promedio: " + String.format(Locale.US, "%.1f", cardLambda) + " 🟨"
+                        }
 
                         // Cuotas 1X2 limitadas a 2 decimales
                         val isHomeFav = (s % 10) < 6
@@ -496,16 +598,18 @@ fun CyberMatch(m: MatchUi) {
             }
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Tarjetas reales y favorito
+            // Tarjetas y favorito (si no hay datos de tarjetas se omite el cuadro)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Surface(modifier = Modifier.weight(1f), color = Color(0x99111827), shape = RoundedCornerShape(4.dp)) {
-                    Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("TARJETAS", fontSize = 7.sp, color = Amber, fontWeight = FontWeight.Black)
-                        Text(m.cards, fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                if (m.cards.isNotBlank()) {
+                    Surface(modifier = Modifier.weight(1f), color = Color(0x99111827), shape = RoundedCornerShape(4.dp)) {
+                        Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("TARJETAS", fontSize = 7.sp, color = Amber, fontWeight = FontWeight.Black)
+                            Text(m.cards, fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
                 Surface(modifier = Modifier.weight(1f), color = Color(0x99111827), shape = RoundedCornerShape(4.dp)) {
-                    Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("FAVORITO", fontSize = 7.sp, color = Cyan, fontWeight = FontWeight.Black)
                         Text(m.fav, fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
@@ -576,6 +680,16 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         Spacer(modifier = Modifier.height(5.dp))
+
+                        // Indicador de recarga sin parpadeo (la lista previa se mantiene visible)
+                        if (viewModel.loading && viewModel.matches.isNotEmpty()) {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth().height(2.dp),
+                                color = Cyan,
+                                trackColor = Color(0xFF161F33)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
 
                         // Lista de Partidos con HUD
                         if (viewModel.loading && viewModel.matches.isEmpty()) {

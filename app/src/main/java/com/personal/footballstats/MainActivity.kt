@@ -26,7 +26,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -46,7 +48,7 @@ data class MatchUi(val id: String, val h: String, val a: String, val hForm: List
 data class League(val code: String, val name: String, val tag: String)
 
 // =============================================================
-// 2. MOTOR MATEMÁTICO (INTACTO)
+// 2. MOTOR MATEMÁTICO (COMPLETO CON GOLES, BTTS Y DOBLE OP)
 // =============================================================
 object ParlayEngine {
     fun poissonPmf(k: Int, lambda: Double): Double {
@@ -70,13 +72,49 @@ object ParlayEngine {
         return if (pOver >= pUnder) ParlayLeg(category, "MÁS de $line $category", pOver) else ParlayLeg(category, "MENOS de $line $category", pUnder)
     }
 
-    fun buildBestParlay(cardLambda: Double?, cornerLambda: Double?): MathematicalParlay {
+    fun buildBestParlay(goalLambdaHome: Double?, goalLambdaAway: Double?, cardLambda: Double?, cornerLambda: Double?): MathematicalParlay {
         val candidates = mutableListOf<ParlayLeg>()
+
+        // 1. GOLES Y DERIVADOS REALES
+        if (goalLambdaHome != null && goalLambdaAway != null) {
+            val totalGoals = goalLambdaHome + goalLambdaAway
+            val pOver25 = poissonOver(2.5, totalGoals)
+            val pUnder25 = poissonUnder(2.5, totalGoals)
+            candidates.add(if (pOver25 >= pUnder25) ParlayLeg("GOLES", "MÁS de 2.5 Goles", pOver25) else ParlayLeg("GOLES", "MENOS de 2.5 Goles", pUnder25))
+
+            // BTTS
+            val pHomeScores = 1.0 - exp(-goalLambdaHome)
+            val pAwayScores = 1.0 - exp(-goalLambdaAway)
+            val pBtts = pHomeScores * pAwayScores
+            candidates.add(if (pBtts >= 0.5) ParlayLeg("BTTS", "AMBOS MARCAN: SÍ", pBtts) else ParlayLeg("BTTS", "AMBOS MARCAN: NO", 1.0 - pBtts))
+
+            // Doble Oportunidad
+            val p1X = pHomeScores + (1.0 - pHomeScores) * (1.0 - pAwayScores)
+            val pX2 = pAwayScores + (1.0 - pHomeScores) * (1.0 - pAwayScores)
+            if (p1X > pX2) candidates.add(ParlayLeg("DOBLE OP", "1X (Local/Empate)", p1X.coerceIn(0.1, 0.95)))
+            else candidates.add(ParlayLeg("DOBLE OP", "X2 (Visita/Empate)", pX2.coerceIn(0.1, 0.95)))
+        }
+
+        // 2. TARJETAS Y CÓRNERS
         buildDynamicLeg("TARJETAS", cardLambda)?.let { candidates.add(it) }
         buildDynamicLeg("CÓRNERS", cornerLambda)?.let { candidates.add(it) }
 
+        // FILTRO ANTI-CORRELACIÓN Y SELECCIÓN
         val sorted = candidates.sortedByDescending { it.modelProb }
-        val selected = sorted.filter { it.modelProb > 0.50 }.take(3)
+        val selected = mutableListOf<ParlayLeg>()
+        var hasGoalOutcome = false
+
+        for (leg in sorted) {
+            if (selected.size >= 3) break
+            if (leg.modelProb <= 0.50) continue 
+
+            val isGoalCat = leg.category in listOf("GOLES", "BTTS", "DOBLE OP")
+            if (isGoalCat && hasGoalOutcome) continue
+            if (isGoalCat) hasGoalOutcome = true
+            
+            if (selected.any { it.category == leg.category }) continue
+            selected.add(leg)
+        }
 
         var jointProb = if (selected.isEmpty()) 0.0 else 1.0
         selected.forEach { jointProb *= it.modelProb }
@@ -89,7 +127,7 @@ object ParlayEngine {
 }
 
 // =============================================================
-// 3. VIEWMODEL (EXTRACCIÓN PROFUNDA DE ESPN)
+// 3. VIEWMODEL (EXTRACCIÓN PROFUNDA PARALELA - RÁPIDA)
 // =============================================================
 class FootballViewModel : ViewModel() {
     val leagues = listOf(League("arg.1","Argentina","ARG"), League("bra.1","Brasil","BRA"), League("esp.1","LaLiga","ESP"), League("eng.1","Premier","ENG"), League("uefa.champions","Champions","UCL"), League("mex.1","Liga MX","MEX"), League("uru.1","Uruguay","URU"), League("fra.1","Ligue 1","FRA"), League("por.1","Primeira","POR"), League("usa.1","MLS","MLS"))
@@ -102,70 +140,74 @@ class FootballViewModel : ViewModel() {
     fun selectLeague(league: League) { selLeague = league; fetchMatches(league) }
     fun refresh() { fetchMatches(selLeague) }
 
-    // 🔥 FUNCIÓN CORREGIDA CON "suspend"
-    private suspend fun getRealAverages(teamId: String, leagueCode: String): Pair<Double?, Double?> {
+    // 🚀 EXTRACCIÓN RÁPIDA CON CORRUTINAS (async)
+    private suspend fun getTeamStatsFast(teamId: String, leagueCode: String): Triple<Double?, Double?, Double?> {
         try {
-            // 1. Buscamos el fixture del equipo
-            val scheduleUrl = URL("https://site.api.espn.com/apis/site/v2/sports/soccer/$leagueCode/teams/$teamId/schedule")
-            val scheduleJson = JSONObject(scheduleUrl.readText())
-            val events = scheduleJson.optJSONArray("events") ?: return Pair(null, null)
+            val scheduleJson = JSONObject(URL("https://site.api.espn.com/apis/site/v2/sports/soccer/$leagueCode/teams/$teamId/schedule").readText())
+            val events = scheduleJson.optJSONArray("events") ?: return Triple(null, null, null)
+            
+            var playedMatches = 0
+            var totalGoals = 0.0; var totalCorners = 0.0; var totalCards = 0.0
 
-            var totalCorners = 0.0
-            var totalCards = 0.0
-            var validMatches = 0
+            // Usamos async para buscar los partidos en paralelo
+            coroutineScope {
+                val deferredStats = mutableListOf<kotlinx.coroutines.Deferred<Triple<Double, Double, Double>>>()
 
-            // 2. Recorremos los eventos (buscamos los últimos 5 jugados)
-            for (i in 0 until events.length()) {
-                if (validMatches >= 5) break 
-                
-                val event = events.getJSONObject(i)
-                val comps = event.optJSONArray("competitions")?.getJSONObject(0) ?: continue
-                val status = comps.optJSONObject("status")?.optJSONObject("type")?.optString("state")
-                
-                if (status == "post") { // Si el partido ya se jugó
-                    val eventId = event.optString("id")
-                    
-                    // 3. Entramos al resumen del partido
-                    val summaryUrl = URL("https://site.api.espn.com/apis/site/v2/sports/soccer/$leagueCode/summary?event=$eventId")
-                    val summaryJson = JSONObject(summaryUrl.readText())
-                    
-                    val boxscoreTeams = summaryJson.optJSONObject("boxscore")?.optJSONArray("teams")
-                    if (boxscoreTeams != null) {
-                        for (t in 0 until boxscoreTeams.length()) {
-                            val teamObj = boxscoreTeams.getJSONObject(t)
-                            // 🔥 Leer el ID del equipo correctamente
-                            val teamIdFromJson = teamObj.optJSONObject("team")?.optString("id") ?: ""
-                            
-                            if (teamIdFromJson == teamId) {
-                                val stats = teamObj.optJSONArray("statistics")
-                                if (stats != null) {
-                                    for (s in 0 until stats.length()) {
-                                        val stat = stats.getJSONObject(s)
-                                        val name = stat.optString("name", "").lowercase()
-                                        
-                                        if (name == "woncorners" || name == "corners") {
-                                            totalCorners += stat.optString("displayValue", "0").toDoubleOrNull() ?: 0.0
-                                        }
-                                        if (name == "yellowcards") {
-                                            totalCards += stat.optString("displayValue", "0").toDoubleOrNull() ?: 0.0
+                for (i in 0 until events.length()) {
+                    if (playedMatches >= 5) break
+                    val event = events.getJSONObject(i)
+                    val comps = event.optJSONArray("competitions")?.getJSONObject(0) ?: continue
+                    if (comps.optJSONObject("status")?.optJSONObject("type")?.optString("state") == "post") {
+                        playedMatches++
+                        val eventId = event.optString("id")
+                        
+                        // Lanzamos la petición en paralelo
+                        deferredStats.add(async(Dispatchers.IO) {
+                            var g = 0.0; var c = 0.0; var k = 0.0
+                            try {
+                                val summary = JSONObject(URL("https://site.api.espn.com/apis/site/v2/sports/soccer/$leagueCode/summary?event=$eventId").readText())
+                                val boxscoreTeams = summary.optJSONObject("boxscore")?.optJSONArray("teams")
+                                if (boxscoreTeams != null) {
+                                    for (t in 0 until boxscoreTeams.length()) {
+                                        val teamObj = boxscoreTeams.getJSONObject(t)
+                                        if (teamObj.optJSONObject("team")?.optString("id") == teamId) {
+                                            val stats = teamObj.optJSONArray("statistics")
+                                            if (stats != null) {
+                                                for (s in 0 until stats.length()) {
+                                                    val stat = stats.getJSONObject(s)
+                                                    val name = stat.optString("name", "").lowercase()
+                                                    val valStr = stat.optString("displayValue", "0").replace("%", "")
+                                                    
+                                                    when (name) {
+                                                        "goals", "points" -> g = valStr.toDoubleOrNull() ?: 0.0
+                                                        "woncorners", "corners" -> c = valStr.toDoubleOrNull() ?: 0.0
+                                                        "yellowcards" -> k = valStr.toDoubleOrNull() ?: 0.0
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        }
+                            } catch (e: Exception) {}
+                            Triple(g, c, k)
+                        })
                     }
-                    validMatches++
-                    delay(200) // Pausa para no saturar a ESPN
+                }
+                
+                // Esperamos a que terminen todas las peticiones al mismo tiempo
+                val results = deferredStats.awaitAll()
+                results.forEach { 
+                    totalGoals += it.first
+                    totalCorners += it.second
+                    totalCards += it.third
                 }
             }
 
-            if (validMatches > 0) {
-                return Pair(totalCorners / validMatches, totalCards / validMatches)
+            if (playedMatches > 0) {
+                return Triple(totalGoals / playedMatches, totalCorners / playedMatches, totalCards / playedMatches)
             }
-        } catch (e: Exception) {
-            // Si falla, devolvemos null
-        }
-        return Pair(null, null)
+        } catch (e: Exception) {}
+        return Triple(null, null, null)
     }
 
     private fun fetchMatches(lg: League) {
@@ -177,49 +219,61 @@ class FootballViewModel : ViewModel() {
                     val events = JSONObject(text).optJSONArray("events") ?: return@withContext emptyList<MatchUi>()
                     val out = mutableListOf<MatchUi>()
 
+                    // ⚡ Procesamos todos los partidos en paralelo para que la pantalla cargue rapidísimo
+                    val deferredMatches = mutableListOf<kotlinx.coroutines.Deferred<MatchUi?>>()
+
                     for (i in 0 until events.length()) {
                         val ev = events.getJSONObject(i)
-                        val comps = ev.optJSONArray("competitions") ?: continue
-                        if (comps.length() == 0) continue
-                        val c = comps.getJSONObject(0)
-                        val competitors = c.optJSONArray("competitors") ?: continue
-                        
-                        var h = "Local"; var a = "Visitante"; var hId = ""; var aId = ""
-                        var hCp: JSONObject? = null; var aCp: JSONObject? = null
+                        deferredMatches.add(async {
+                            try {
+                                val comps = ev.optJSONArray("competitions") ?: return@async null
+                                if (comps.length() == 0) return@async null
+                                val c = comps.getJSONObject(0)
+                                val competitors = c.optJSONArray("competitors") ?: return@async null
+                                
+                                var h = "Local"; var a = "Visitante"; var hId = ""; var aId = ""
+                                var hCp: JSONObject? = null; var aCp: JSONObject? = null
 
-                        for (j in 0 until competitors.length()) {
-                            val cp = competitors.getJSONObject(j)
-                            val teamObj = cp.optJSONObject("team")
-                            val name = teamObj?.optString("shortDisplayName", "")?.ifBlank { teamObj.optString("displayName") } ?: "Equipo"
-                            val teamId = teamObj?.optString("id", "") ?: ""
-                            
-                            if (cp.optString("homeAway") == "home") { h = name; hId = teamId; hCp = cp } else { a = name; aId = teamId; aCp = cp }
-                        }
+                                for (j in 0 until competitors.length()) {
+                                    val cp = competitors.getJSONObject(j)
+                                    val teamObj = cp.optJSONObject("team")
+                                    val name = teamObj?.optString("shortDisplayName", "")?.ifBlank { teamObj.optString("displayName") } ?: "Equipo"
+                                    val teamId = teamObj?.optString("id", "") ?: ""
+                                    
+                                    if (cp.optString("homeAway") == "home") { h = name; hId = teamId; hCp = cp } else { a = name; aId = teamId; aCp = cp }
+                                }
 
-                        val hFormRaw = hCp?.optString("form", "")?.uppercase() ?: ""
-                        val aFormRaw = aCp?.optString("form", "")?.uppercase() ?: ""
-                        val hForm = if (hFormRaw.length >= 5) hFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
-                        val aForm = if (aFormRaw.length >= 5) aFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
+                                val hFormRaw = hCp?.optString("form", "")?.uppercase() ?: ""
+                                val aFormRaw = aCp?.optString("form", "")?.uppercase() ?: ""
+                                val hForm = if (hFormRaw.length >= 5) hFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
+                                val aForm = if (aFormRaw.length >= 5) aFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
 
-                        // 🔥 LLAMADA A LA EXTRACCIÓN PROFUNDA
-                        val (hCorners, hCards) = getRealAverages(hId, lg.code)
-                        val (aCorners, aCards) = getRealAverages(aId, lg.code)
+                                // Ejecutamos ambas peticiones en paralelo
+                                val hStatsDeferred = async { getTeamStatsFast(hId, lg.code) }
+                                val aStatsDeferred = async { getTeamStatsFast(aId, lg.code) }
+                                
+                                val (hGoals, hCorners, hCards) = hStatsDeferred.await()
+                                val (aGoals, aCorners, aCards) = aStatsDeferred.await()
 
-                        val totalCorners = if (hCorners != null && aCorners != null) hCorners + aCorners else null
-                        val totalCards = if (hCards != null && aCards != null) hCards + aCards else null
+                                val totalCorners = if (hCorners != null && aCorners != null) hCorners + aCorners else null
+                                val totalCards = if (hCards != null && aCards != null) hCards + aCards else null
 
-                        val cardsStr = if (totalCards != null) String.format(Locale.US, "%.1f 🟨", totalCards) else "N/D"
-                        val cornersStr = if (totalCorners != null) String.format(Locale.US, "%.1f", totalCorners) else "N/D"
+                                val cardsStr = if (totalCards != null) String.format(Locale.US, "%.1f 🟨", totalCards) else "N/D"
+                                val cornersStr = if (totalCorners != null) String.format(Locale.US, "%.1f", totalCorners) else "N/D"
 
-                        val parlay = ParlayEngine.buildBestParlay(totalCards, totalCorners)
-                        
-                        val id = ev.optString("id", i.toString())
-                        val isLive = c.optJSONObject("status")?.optJSONObject("type")?.optString("state") == "in"
-                        val dt = ev.optString("date", "").split("T").getOrNull(0) ?: "HOY"
+                                val parlay = ParlayEngine.buildBestParlay(hGoals, aGoals, totalCards, totalCorners)
+                                
+                                val id = ev.optString("id", i.toString())
+                                val isLive = c.optJSONObject("status")?.optJSONObject("type")?.optString("state") == "in"
+                                val dt = ev.optString("date", "").split("T").getOrNull(0) ?: "HOY"
 
-                        out.add(MatchUi(id, h, a, hForm, aForm, "VS", lg.name, lg.tag, if(isLive) "EN VIVO" else "PROGRAMADO", isLive, dt, "N/D", cardsStr, cornersStr, Triple("N/D", "N/D", "N/D"), parlay))
+                                return@async MatchUi(id, h, a, hForm, aForm, "VS", lg.name, lg.tag, if(isLive) "EN VIVO" else "PROGRAMADO", isLive, dt, "N/D", cardsStr, cornersStr, Triple("N/D", "N/D", "N/D"), parlay)
+                            } catch (e: Exception) {
+                                null
+                            }
+                        })
                     }
-                    out
+                    deferredMatches.awaitAll().filterNotNull()
                 }
                 matches = list
             } catch (e: Exception) {
@@ -232,7 +286,7 @@ class FootballViewModel : ViewModel() {
 }
 
 // =============================================================
-// 4. INTERFAZ VISUAL CYBERPUNK (INTACTA)
+// 4. INTERFAZ VISUAL CYBERPUNK
 // =============================================================
 val DeepBg = Color(0xFF090D16); val GlassCard = Color(0xFF101726); val CyberBorder = Color(0xFF1D283E)
 val Cyan = Color(0xFF00F0FF); val BrightGreen = Color(0xFF00FF66); val BrightYellow = Color(0xFFFFE600)
@@ -318,10 +372,10 @@ fun CyberMatch(m: MatchUi) {
                     Spacer(modifier = Modifier.height(4.dp))
 
                     if (m.parlay.legs.isEmpty()) {
-                        Text("Faltan datos reales de mercado o estadísticas para calcular un Parlay.", fontSize = 9.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 4.dp))
+                        Text("Faltan datos reales para calcular un Parlay.", fontSize = 9.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 4.dp))
                     } else {
                         m.parlay.legs.forEach { l ->
-                            val badgeColor = when (l.category) { "CÓRNERS" -> Violet; "TARJETAS" -> BrightYellow; else -> BrightGreen }
+                            val badgeColor = when (l.category) { "CÓRNERS" -> Violet; "TARJETAS" -> BrightYellow; "GOLES" -> Cyan; "BTTS" -> Color(0xFFFF9900); "DOBLE OP" -> Rose; else -> BrightGreen }
                             Row(modifier = Modifier.fillMaxWidth().padding(vertical = 1.5.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                                     Surface(color = badgeColor.copy(alpha = 0.2f), shape = RoundedCornerShape(3.dp)) {

@@ -90,7 +90,7 @@ object ParlayEngine {
 }
 
 // =============================================================
-// 3. VIEWMODEL (ESPN + BZZOIRO CON ESPÍA)
+// 3. VIEWMODEL (ESPN + BZZOIRO)
 // =============================================================
 class FootballViewModel : ViewModel() {
     val leagues = listOf(League("arg.1","Argentina","ARG"), League("bra.1","Brasil","BRA"), League("esp.1","LaLiga","ESP"), League("eng.1","Premier","ENG"), League("uefa.champions","Champions","UCL"), League("mex.1","Liga MX","MEX"), League("uru.1","Uruguay","URU"), League("fra.1","Ligue 1","FRA"), League("por.1","Primeira","POR"), League("usa.1","MLS","MLS"))
@@ -108,7 +108,15 @@ class FootballViewModel : ViewModel() {
 
     private fun getTeamStats(teamName: String): Pair<Double?, Double?> {
         try {
-            val nameMap = mapOf("Man Utd" to "Manchester United", "Man City" to "Manchester City", "Nottm Forest" to "Nottingham Forest", "Leeds" to "Leeds United", "Sheffield Utd" to "Sheffield United", "West Ham" to "West Ham United", "Newcastle" to "Newcastle United", "Tottenham" to "Tottenham Hotspur")
+            // Traductor de abreviaturas de ESPN a nombres de Bzzoiro
+            val nameMap = mapOf(
+                "Man Utd" to "Manchester United", "Man City" to "Manchester City",
+                "Nottm Forest" to "Nottingham Forest", "Leeds" to "Leeds United",
+                "Sheffield Utd" to "Sheffield United", "West Ham" to "West Ham United",
+                "Newcastle" to "Newcastle United", "Tottenham" to "Tottenham Hotspur",
+                "Estudiantes RC" to "Estudiantes Rio Cuarto", "Gimnasia LP" to "Gimnasia La Plata",
+                "Racing" to "Racing Club", "Newells" to "Newell's Old Boys"
+            )
             val searchName = nameMap[teamName] ?: teamName
             val encodedName = URLEncoder.encode(searchName, "UTF-8")
             
@@ -134,33 +142,15 @@ class FootballViewModel : ViewModel() {
                     if (conn2.responseCode == 200) {
                         val json2 = JSONObject(conn2.inputStream.bufferedReader().readText())
                         
-                        // 🔥 MODO ESPÍA: Tratamos de buscar en "overall"
+                        // 🔥 LEEMOS DENTRO DE "overall" -> "stats"
                         val overallObj = json2.optJSONObject("overall")
                         if (overallObj != null) {
-                            val keys = overallObj.keys().asSequence().joinToString(",")
-                            errorMsg = "OvrKeys: $keys"
-                            
-                            val corners = overallObj.optDouble("corners", overallObj.optDouble("avg_corners", 0.0)).takeIf { it > 0.0 }
-                            val cards = overallObj.optDouble("cards", overallObj.optDouble("yellow_cards", 0.0)).takeIf { it > 0.0 }
-                            
-                            if (corners != null && cards != null) return Pair(corners, cards)
-                        } else {
-                            // 🔥 MODO ESPÍA 2: Si no hay "overall", buscamos en "matches"
-                            val matchesArr = json2.optJSONArray("matches")
-                            if (matchesArr != null && matchesArr.length() > 0) {
-                                val firstMatchKeys = matchesArr.getJSONObject(0).keys().asSequence().joinToString(",")
-                                errorMsg = "MKeys: $firstMatchKeys"
-                                
-                                var sumC = 0.0; var sumK = 0.0
-                                for (i in 0 until matchesArr.length()) {
-                                    val m = matchesArr.getJSONObject(i)
-                                    val c = m.optDouble("corners", m.optDouble("total_corners", 0.0))
-                                    val k = m.optDouble("cards", m.optDouble("yellow_cards", 0.0))
-                                    sumC += c; sumK += k
-                                }
-                                return Pair(sumC / matchesArr.length(), sumK / matchesArr.length())
-                            } else {
-                                errorMsg = "No data found"
+                            val statsObj = overallObj.optJSONObject("stats")
+                            if (statsObj != null) {
+                                // Buscamos los nombres más comunes
+                                val corners = statsObj.optDouble("corners", statsObj.optDouble("avg_corners", 0.0)).takeIf { it > 0.0 }
+                                val cards = statsObj.optDouble("cards", statsObj.optDouble("yellow_cards", 0.0)).takeIf { it > 0.0 }
+                                return Pair(corners, cards)
                             }
                         }
                     } else {

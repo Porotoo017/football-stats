@@ -108,47 +108,55 @@ class FootballViewModel : ViewModel() {
     fun refresh() { fetchMatches(selLeague) }
 
     private fun getTeamStats(teamName: String): Pair<Double?, Double?> {
-        try {
-            val cleanName = teamName.split(" ").firstOrNull() ?: teamName
-            val encodedName = URLEncoder.encode(cleanName, "UTF-8")
-            val url = URL("https://sports.bzzoiro.com/api/v2/teams/?name=$encodedName")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("Authorization", bzzoiroApiKey)
-            conn.setRequestProperty("Accept", "application/json") // AYUDA A EVITAR EL ERROR 400
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
+    try {
+        val encodedName = URLEncoder.encode(teamName, "UTF-8")
+        val url = URL("https://sports.bzzoiro.com/api/v2/teams/?name=$encodedName")
+        val conn = url.openConnection() as HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.setRequestProperty("Authorization", bzzoiroApiKey)
+        conn.setRequestProperty("Accept", "application/json")
+        conn.connectTimeout = 5000
+        conn.readTimeout = 5000
 
-            if (conn.responseCode == 200) {
-                val json1 = JSONObject(conn.inputStream.bufferedReader().readText())
-                val results = json1.optJSONArray("results") ?: json1.optJSONArray("data")
-                if (results != null && results.length() > 0) {
-                    val teamId = results.getJSONObject(0).optInt("id")
-                    val formUrl = URL("https://sports.bzzoiro.com/api/v2/teams/$teamId/form/")
-                    val conn2 = formUrl.openConnection() as HttpURLConnection
-                    conn2.requestMethod = "GET"
-                    conn2.setRequestProperty("Authorization", bzzoiroApiKey)
-                    conn2.setRequestProperty("Accept", "application/json")
+        if (conn.responseCode == 200) {
+            val json1 = JSONObject(conn.inputStream.bufferedReader().readText())
+            val results = json1.optJSONArray("results") ?: json1.optJSONArray("data")
+            if (results != null && results.length() > 0) {
+                val teamId = results.getJSONObject(0).optInt("id")
+                val formUrl = URL("https://sports.bzzoiro.com/api/v2/teams/$teamId/form/")
+                val conn2 = formUrl.openConnection() as HttpURLConnection
+                conn2.requestMethod = "GET"
+                conn2.setRequestProperty("Authorization", bzzoiroApiKey)
+                conn2.setRequestProperty("Accept", "application/json")
 
-                    if (conn2.responseCode == 200) {
-                        val json2 = JSONObject(conn2.inputStream.bufferedReader().readText())
-                        val corners = json2.optDouble("avg_corners", 0.0).takeIf { it > 0.0 }
-                        val cards = json2.optDouble("avg_cards", 0.0).takeIf { it > 0.0 }
-                        return Pair(corners, cards)
-                    } else {
-                        errorMsg = "Error Stats: ${conn2.responseCode}"
+                if (conn2.responseCode == 200) {
+                    val response2 = conn2.inputStream.bufferedReader().readText()
+                    val json2 = JSONObject(response2)
+                    
+                    // Buscamos los datos con los nombres que creemos que tienen
+                    val corners = json2.optDouble("avg_corners", 0.0).takeIf { it > 0.0 }
+                    val cards = json2.optDouble("avg_cards", 0.0).takeIf { it > 0.0 }
+                    
+                    // SI NO ENCUENTRA LOS DATOS, NOS MUESTRA EL TEXTO DEL JSON EN PANTALLA
+                    if (cards == null) {
+                        errorMsg = json2.toString().take(40) // Muestra los primeros 40 caracteres
                     }
+                    
+                    return Pair(corners, cards)
                 } else {
-                    errorMsg = "No existe: $cleanName"
+                    errorMsg = "Error Stats: ${conn2.responseCode}"
                 }
             } else {
-                errorMsg = "Error API: ${conn.responseCode}"
+                errorMsg = "No existe: $teamName"
             }
-        } catch (e: Exception) {
-            errorMsg = "Red: ${e.message?.take(10)}"
+        } else {
+            errorMsg = "Error API: ${conn.responseCode}"
         }
-        return Pair(null, null)
+    } catch (e: Exception) {
+        errorMsg = "Red: ${e.message?.take(10)}"
     }
+    return Pair(null, null)
+}
 
     private fun fetchMatches(lg: League) {
         viewModelScope.launch {

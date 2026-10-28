@@ -26,12 +26,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.exp
@@ -80,7 +80,6 @@ object ParlayEngine {
         val sorted = candidates.sortedByDescending { it.modelProb }
         val selected = sorted.filter { it.modelProb > 0.50 }.take(3)
 
-        // CORRECCIÓN: Si no hay datos, la probabilidad es 0%, no 100%.
         var jointProb = if (selected.isEmpty()) 0.0 else 1.0
         selected.forEach { jointProb *= it.modelProb }
         jointProb = round(jointProb * 1000.0) / 1000.0
@@ -92,7 +91,7 @@ object ParlayEngine {
 }
 
 // =============================================================
-// 3. VIEWMODEL (ESPN + BZZOIRO CON CHIVATO DE ERRORES)
+// 3. VIEWMODEL (ESPN + BZZOIRO)
 // =============================================================
 class FootballViewModel : ViewModel() {
     val leagues = listOf(League("arg.1","Argentina","ARG"), League("bra.1","Brasil","BRA"), League("esp.1","LaLiga","ESP"), League("eng.1","Premier","ENG"), League("uefa.champions","Champions","UCL"), League("mex.1","Liga MX","MEX"), League("uru.1","Uruguay","URU"), League("fra.1","Ligue 1","FRA"), League("por.1","Primeira","POR"), League("usa.1","MLS","MLS"))
@@ -110,12 +109,13 @@ class FootballViewModel : ViewModel() {
 
     private fun getTeamStats(teamName: String): Pair<Double?, Double?> {
         try {
-            // Limpiamos el nombre por si ESPN le agrega siglas (ej: "Estudiantes RC")
             val cleanName = teamName.split(" ").firstOrNull() ?: teamName
-            val url = URL("https://sports.bzzoiro.com/api/v2/teams/?search=$cleanName")
+            val encodedName = URLEncoder.encode(cleanName, "UTF-8")
+            val url = URL("https://sports.bzzoiro.com/api/v2/teams/?search=$encodedName")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.setRequestProperty("Authorization", bzzoiroApiKey)
+            conn.setRequestProperty("Accept", "application/json") // AYUDA A EVITAR EL ERROR 400
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
 
@@ -128,6 +128,7 @@ class FootballViewModel : ViewModel() {
                     val conn2 = formUrl.openConnection() as HttpURLConnection
                     conn2.requestMethod = "GET"
                     conn2.setRequestProperty("Authorization", bzzoiroApiKey)
+                    conn2.setRequestProperty("Accept", "application/json")
 
                     if (conn2.responseCode == 200) {
                         val json2 = JSONObject(conn2.inputStream.bufferedReader().readText())
@@ -135,13 +136,13 @@ class FootballViewModel : ViewModel() {
                         val cards = json2.optDouble("avg_cards", 0.0).takeIf { it > 0.0 }
                         return Pair(corners, cards)
                     } else {
-                        errorMsg = "Err Form: ${conn2.responseCode}" // Muestra error 404/500
+                        errorMsg = "Error Stats: ${conn2.responseCode}"
                     }
                 } else {
-                    errorMsg = "No existe: $cleanName" // Muestra si no encuentra el equipo
+                    errorMsg = "No existe: $cleanName"
                 }
             } else {
-                errorMsg = "Err Token: ${conn.responseCode}" // Muestra si la clave es 401
+                errorMsg = "Error API: ${conn.responseCode}"
             }
         } catch (e: Exception) {
             errorMsg = "Red: ${e.message?.take(10)}"
@@ -172,20 +173,17 @@ class FootballViewModel : ViewModel() {
                             if (cp.optString("homeAway") == "home") { h = name; hCp = cp } else { a = name; aCp = cp }
                         }
 
-                        // Racha (W/D/L)
                         val hFormRaw = hCp?.optString("form", "")?.uppercase() ?: ""
                         val aFormRaw = aCp?.optString("form", "")?.uppercase() ?: ""
                         val hForm = if (hFormRaw.length >= 5) hFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
                         val aForm = if (aFormRaw.length >= 5) aFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
 
-                        // CONSULTA A BZZOIRO
                         val (hCorners, hCards) = getTeamStats(h)
                         val (aCorners, aCards) = getTeamStats(a)
 
                         val totalCorners = if (hCorners != null && aCorners != null) hCorners + aCorners else null
                         val totalCards = if (hCards != null && aCards != null) hCards + aCards else null
 
-                        // SI HAY ERROR, LO MOSTRAMOS ACÁ
                         val cardsStr = if (totalCards != null) String.format(Locale.US, "%.1f 🟨", totalCards) else (errorMsg ?: "N/D")
                         val cornersStr = if (totalCorners != null) String.format(Locale.US, "%.1f", totalCorners) else "N/D"
 
@@ -210,67 +208,114 @@ class FootballViewModel : ViewModel() {
 }
 
 // =============================================================
-// 4. INTERFAZ VISUAL
+// 4. INTERFAZ VISUAL (RESTAURADA CYBERPUNK)
 // =============================================================
 val DeepBg = Color(0xFF090D16); val GlassCard = Color(0xFF101726); val CyberBorder = Color(0xFF1D283E)
 val Cyan = Color(0xFF00F0FF); val BrightGreen = Color(0xFF00FF66); val BrightYellow = Color(0xFFFFE600)
 val Rose = Color(0xFFFF0055); val Violet = Color(0xFFB026FF)
 
 @Composable
+fun FormGuideRow(form: List<Char>, alignEnd: Boolean) {
+    Row(
+        horizontalArrangement = if (alignEnd) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 8.dp)
+    ) {
+        form.forEach { res ->
+            val (bg, border, textCol) = when (res) {
+                'W' -> Triple(Color(0x3300FF66), BrightGreen, BrightGreen)
+                'D' -> Triple(Color(0x33FFE600), BrightYellow, BrightYellow)
+                'L' -> Triple(Color(0x33FF0055), Rose, Rose)
+                else -> Triple(Color(0xFF1D283E), Color.Gray, Color.Gray)
+            }
+            Surface(
+                modifier = Modifier.padding(horizontal = 1.5.dp).size(17.dp),
+                shape = RoundedCornerShape(3.dp), color = bg, border = BorderStroke(1.dp, border)
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(res.toString(), fontSize = 10.sp, fontWeight = FontWeight.Black, color = textCol, textAlign = TextAlign.Center)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun CyberMatch(m: MatchUi) {
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(11.dp), colors = CardDefaults.cardColors(containerColor = GlassCard), border = BorderStroke(1.dp, CyberBorder)) {
         Column(modifier = Modifier.padding(9.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("[${m.tag}] ${m.lg}", fontSize = 8.sp, color = Cyan, fontWeight = FontWeight.Black)
-                Text(if (m.live) m.st else m.dt, fontSize = 8.sp, color = Color.Gray)
+                Surface(color = Color(0x3300F0FF), shape = RoundedCornerShape(4.dp)) {
+                    Text("[${m.tag}] ${m.lg}", fontSize = 8.sp, fontWeight = FontWeight.Black, color = Cyan, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
+                }
+                Surface(color = if (m.live) Color(0x44FF0055) else Color(0x22FFFFFF), shape = RoundedCornerShape(4.dp)) {
+                    Text(if (m.live) m.st else m.dt, color = if (m.live) Color.White else Color.Gray, fontSize = 8.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
+                }
             }
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                    Text(m.h, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Black)
-                    Row(modifier = Modifier.padding(top = 4.dp)) {
-                        m.hForm.forEach { Text(it.toString(), color = Color.White, fontSize = 10.sp, modifier = Modifier.padding(1.dp).background(Color.Gray).padding(2.dp)) }
-                    }
+                    Text(m.h, fontWeight = FontWeight.Black, fontSize = 12.sp, color = Color.White, textAlign = TextAlign.End, maxLines = 1)
+                    FormGuideRow(form = m.hForm, alignEnd = true)
                 }
-                Text(m.sc, fontSize = 11.sp, color = Cyan, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 8.dp))
+                Surface(color = Color(0xFF161F33), shape = RoundedCornerShape(5.dp), modifier = Modifier.padding(horizontal = 6.dp)) {
+                    Text(m.sc, fontWeight = FontWeight.Black, fontSize = 11.sp, color = if (m.live) BrightGreen else Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
-                    Text(m.a, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Black)
-                    Row(modifier = Modifier.padding(top = 4.dp)) {
-                        m.aForm.forEach { Text(it.toString(), color = Color.White, fontSize = 10.sp, modifier = Modifier.padding(1.dp).background(Color.Gray).padding(2.dp)) }
-                    }
+                    Text(m.a, fontWeight = FontWeight.Black, fontSize = 12.sp, color = Color.White, textAlign = TextAlign.Start, maxLines = 1)
+                    FormGuideRow(form = m.aForm, alignEnd = false)
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Surface(modifier = Modifier.weight(1f), color = Color(0x99111827), shape = RoundedCornerShape(4.dp)) {
-                    Row(modifier = Modifier.padding(4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("TARJETAS", fontSize = 7.sp, color = BrightYellow, fontWeight = FontWeight.Black)
                         Text(m.cardsAvg, fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
                 Surface(modifier = Modifier.weight(1f), color = Color(0x99111827), shape = RoundedCornerShape(4.dp)) {
-                    Row(modifier = Modifier.padding(4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("CÓRNERS", fontSize = 7.sp, color = Violet, fontWeight = FontWeight.Black)
                         Text(m.cornersAvg, fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(6.dp))
-            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xCC0B101D), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, Cyan.copy(0.3f))) {
+            Spacer(modifier = Modifier.height(5.dp))
+            
+            // HUD DEL PARLAY
+            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xCC0B101D), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Brush.linearGradient(listOf(Cyan.copy(0.6f), Rose.copy(0.6f))))) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("QUANTUM PARLAY", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Black)
-                        Text("${(m.parlay.jointProb * 100).toInt()}% PROB", fontSize = 8.sp, color = BrightGreen, fontWeight = FontWeight.Black)
+                        Text("QUANTUM PARLAY HUD", fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.White)
+                        Surface(color = Color(0x3300FF66), shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, BrightGreen)) {
+                            Text("${(m.parlay.jointProb * 100).toInt()}% PROB", fontSize = 8.sp, fontWeight = FontWeight.Black, color = BrightGreen, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
+                        }
                     }
+                    Spacer(modifier = Modifier.height(4.dp))
+
                     if (m.parlay.legs.isEmpty()) {
-                        Text("Faltan datos reales para calcular.", fontSize = 9.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 4.dp))
+                        Text("Faltan datos reales de mercado o estadísticas para calcular un Parlay.", fontSize = 9.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 4.dp))
                     } else {
                         m.parlay.legs.forEach { l ->
-                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("${l.category}: ${l.pick}", fontSize = 9.sp, color = Color.White)
-                                Text("${(l.modelProb * 100).toInt()}% P", fontSize = 8.sp, color = BrightGreen)
+                            val badgeColor = when (l.category) { "CÓRNERS" -> Violet; "TARJETAS" -> BrightYellow; else -> BrightGreen }
+                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 1.5.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(color = badgeColor.copy(alpha = 0.2f), shape = RoundedCornerShape(3.dp)) {
+                                        Text(l.category, fontSize = 7.sp, fontWeight = FontWeight.Black, color = badgeColor, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(l.pick, fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                }
+                                Text(String.format(Locale.US, "%.0f%% P", l.modelProb * 100.0), fontSize = 8.sp, color = Color.Gray)
                             }
                         }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Prob. Conjunta: ${String.format(Locale.US, "%.1f", m.parlay.jointProb * 100.0)}%", fontSize = 8.sp, color = BrightGreen, fontWeight = FontWeight.Black)
+                        Text(m.parlay.statusText, fontSize = 7.sp, color = if (m.parlay.isQualified) BrightGreen else Rose, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -285,19 +330,29 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = darkColorScheme(background = DeepBg)) {
                 Surface(modifier = Modifier.fillMaxSize(), color = DeepBg) {
                     val vm = remember { FootballViewModel() }
-                    Column(modifier = Modifier.padding(8.dp)) {
-                        Text("BET PRO STATS", color = Color.White, fontWeight = FontWeight.Black, fontSize = 15.sp)
+                    Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("BET PRO STATS", fontSize = 15.sp, fontWeight = FontWeight.Black, color = Color.White)
+                            Button(onClick = { vm.refresh() }, enabled = !vm.loading, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF161F33)), shape = RoundedCornerShape(8.dp)) {
+                                Text("↻", fontSize = 13.sp, color = Cyan, fontWeight = FontWeight.Black)
+                            }
+                        }
                         Spacer(modifier = Modifier.height(5.dp))
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             items(vm.leagues) { l ->
-                                Surface(modifier = Modifier.clickable { vm.selectLeague(l) }, color = if(l == vm.selLeague) Color(0x4400F0FF) else Color.Transparent, border = BorderStroke(1.dp, Cyan)) {
-                                    Text("[${l.tag}] ${l.name}", modifier = Modifier.padding(5.dp), fontSize = 9.sp, color = Cyan)
+                                val active = l == vm.selLeague
+                                Surface(modifier = Modifier.clickable { vm.selectLeague(l) }, color = if (active) Color(0x4400F0FF) else Color(0x99101626), shape = RoundedCornerShape(6.dp), border = BorderStroke(1.dp, if (active) Cyan else CyberBorder)) {
+                                    Text("[${l.tag}] ${l.name}", modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = if (active) Cyan else Color.Gray)
                                 }
                             }
                         }
                         Spacer(modifier = Modifier.height(5.dp))
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(vm.matches, key = { it.id }) { m -> CyberMatch(m) }
+                        if (vm.loading && vm.matches.isEmpty()) {
+                            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Cyan) }
+                        } else {
+                            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(vm.matches, key = { it.id }) { m -> CyberMatch(m) }
+                            }
                         }
                     }
                 }

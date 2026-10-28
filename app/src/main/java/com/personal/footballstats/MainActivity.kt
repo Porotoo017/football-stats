@@ -108,7 +108,6 @@ class FootballViewModel : ViewModel() {
 
     private fun getTeamStats(teamName: String): Pair<Double?, Double?> {
         try {
-            // Traductor de abreviaturas de ESPN a nombres de Bzzoiro
             val nameMap = mapOf(
                 "Man Utd" to "Manchester United", "Man City" to "Manchester City",
                 "Nottm Forest" to "Nottingham Forest", "Leeds" to "Leeds United",
@@ -142,28 +141,31 @@ class FootballViewModel : ViewModel() {
                     if (conn2.responseCode == 200) {
                         val json2 = JSONObject(conn2.inputStream.bufferedReader().readText())
                         
-                        // 🔥 LEEMOS DENTRO DE "overall" -> "stats"
+                        // 🔥 BÚSQUEDA DINÁMICA EN LA CARPETA "STATS"
                         val overallObj = json2.optJSONObject("overall")
                         if (overallObj != null) {
                             val statsObj = overallObj.optJSONObject("stats")
                             if (statsObj != null) {
-                                // Buscamos los nombres más comunes
-                                val corners = statsObj.optDouble("corners", statsObj.optDouble("avg_corners", 0.0)).takeIf { it > 0.0 }
-                                val cards = statsObj.optDouble("cards", statsObj.optDouble("yellow_cards", 0.0)).takeIf { it > 0.0 }
-                                return Pair(corners, cards)
+                                var corners: Double? = null
+                                var cards: Double? = null
+                                val keys = statsObj.keys()
+                                while (keys.hasNext()) {
+                                    val key = keys.next()
+                                    if (key.contains("corner", ignoreCase = true)) {
+                                        corners = statsObj.optDouble(key)
+                                    }
+                                    if (key.contains("card", ignoreCase = true) && !key.contains("red", ignoreCase = true)) {
+                                        cards = statsObj.optDouble(key)
+                                    }
+                                }
+                                if (corners != null && cards != null) return Pair(corners, cards)
                             }
                         }
-                    } else {
-                        errorMsg = "Err Stats: ${conn2.responseCode}"
                     }
-                } else {
-                    errorMsg = "No existe: $teamName"
                 }
-            } else {
-                errorMsg = "Err API: ${conn.responseCode}"
             }
         } catch (e: Exception) {
-            errorMsg = "Red: ${e.message?.take(10)}"
+            // Silencio, si falla devolvemos null
         }
         return Pair(null, null)
     }
@@ -196,13 +198,15 @@ class FootballViewModel : ViewModel() {
                         val hForm = if (hFormRaw.length >= 5) hFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
                         val aForm = if (aFormRaw.length >= 5) aFormRaw.takeLast(5).map { if (it in "WDL") it else 'N' } else listOf('N','N','N','N','N')
 
+                        // Limpiamos el error por partido para que no se repita
                         val (hCorners, hCards) = getTeamStats(h)
                         val (aCorners, aCards) = getTeamStats(a)
 
                         val totalCorners = if (hCorners != null && aCorners != null) hCorners + aCorners else null
                         val totalCards = if (hCards != null && aCards != null) hCards + aCards else null
 
-                        val cardsStr = if (totalCards != null) String.format(Locale.US, "%.1f 🟨", totalCards) else (errorMsg ?: "N/D")
+                        // Mostramos N/D si no hay datos (sin mensajes de error largos)
+                        val cardsStr = if (totalCards != null) String.format(Locale.US, "%.1f 🟨", totalCards) else "N/D"
                         val cornersStr = if (totalCorners != null) String.format(Locale.US, "%.1f", totalCorners) else "N/D"
 
                         val parlay = ParlayEngine.buildBestParlay(totalCards, totalCorners)

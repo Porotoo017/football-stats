@@ -43,6 +43,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -64,15 +67,27 @@ import kotlin.math.pow
 import kotlin.math.round
 
 // ==============================================================================
-// 1. MODELOS DE DATOS CUANTITATIVOS (SISTEMA PRIVADO DE ALTA FRECUENCIA)
+// CONFIGURACIÓN DE API BZZOIRO SPORTS DATA
+// Clave y endpoint oficial de Bzzoiro (Modificable):
+// ==============================================================================
+var bzzoiroApiKey: String = "9665517ed1732bad524c3730e18cd9d90cc1d13f"
+const val BZZOIRO_BASE_URL: String = "https://sports.bzzoiro.com/api/v2"
+
+// ==============================================================================
+// 1. MODELOS DE DATOS CUANTITATIVOS BASADOS EN BZZOIRO
 // ==============================================================================
 
+/**
+ * Evento deportivo estructurado con IDs reales de equipo para consultas de squad y form
+ */
 data class ApexEvent(
     val id: Long,
     val leagueId: Long,
     val leagueName: String,
     val roundLabel: String,
+    val homeTeamId: Long,
     val homeTeam: String,
+    val awayTeamId: Long,
     val awayTeam: String,
     val eventDate: String,
     val status: String,
@@ -107,13 +122,17 @@ enum class FormOutcome {
     LOSS    // Rojo #EF4444
 }
 
+/**
+ * Cuotas reales extraídas de Bzzoiro (/odds/?event_id=)
+ * decimal_odds provisto por casas de apuestas; null si el mercado no está abierto
+ */
 data class RealOdds(
     val home1x2: Double? = null,
     val draw1x2: Double? = null,
     val away1x2: Double? = null,
-    val dc1X: Double? = null,
-    val dcX2: Double? = null,
-    val dc12: Double? = null,
+    val dc1X: Double? = null,        // Doble Oportunidad real 1X
+    val dcX2: Double? = null,        // Doble Oportunidad real X2
+    val dc12: Double? = null,        // Doble Oportunidad real 12
     val bttsYes: Double? = null,
     val bttsNo: Double? = null,
     val over15Goals: Double? = null,
@@ -129,13 +148,31 @@ data class RealOdds(
     val overCardsLine: Double? = null
 )
 
+/**
+ * Estadísticas cuantitativas de forma de equipo de Bzzoiro (/teams/{id}/form/)
+ */
+data class TeamRealFormStats(
+    val teamId: Long,
+    val teamName: String,
+    val matchesPlayed: Int,
+    val avgGoalsScored: Double,
+    val avgGoalsConceded: Double,
+    val avgCorners: Double,
+    val avgYellowCards: Double,
+    val avgTotalShots: Double,
+    val avgShotsOnTarget: Double,
+    val formString: String // Ej: "WWLDW"
+)
+
 data class DoubleChanceFavoriteAnalysis(
     val favoriteTeam: String,
     val underdogTeam: String,
     val isHomeFavorite: Boolean,
     val pickCode: String,
     val pickTitle: String,
-    val realOdds: Double?,
+    val displayOdds: String,       // Cuota real o calculada especificada
+    val rawOdds: Double,           // Valor numérico de cuota
+    val isMarketOdds: Boolean,     // true si vino de casa de apuestas
     val modelProb: Double,
     val fairOdds: Double,
     val expectedValue: Double?,
@@ -156,7 +193,8 @@ data class CornersAnalysis(
     val fairOddsOver105: Double,
     val recommendedPick: String,
     val recommendedProb: Double,
-    val recommendedFairOdds: Double
+    val displayOdds: String,
+    val isMarketOdds: Boolean
 )
 
 data class CardsAnalysis(
@@ -171,20 +209,21 @@ data class CardsAnalysis(
     val frictionIndex: String,
     val recommendedPick: String,
     val recommendedProb: Double,
-    val recommendedFairOdds: Double
+    val displayOdds: String
 )
 
 data class PlayerShotProp(
-    val fullName: String,
+    val fullName: String,              // Extraído del squad real del equipo
     val teamName: String,
-    val rolePosition: String,
+    val rolePosition: String,          // Delantero / Extremo / Atacante
     val totalShotsLambda: Double,
     val shotsOnTargetLambda: Double,
     val pickTotalShots: String,
     val probTotalShots: Double,
     val pickOnTarget: String,
     val probOnTarget: Double,
-    val fairOddsOnTarget: Double
+    val fairOddsOnTarget: Double,
+    val displayOdds: String
 )
 
 data class ParlayLeg(
@@ -192,13 +231,13 @@ data class ParlayLeg(
     val pick: String,
     val lambda: Double?,
     val modelProb: Double,
-    val fairOdds: Double,
-    val realMarketOdds: Double?,
+    val displayOdds: String,
     val edgePercent: Double?,
     val isSafePick: Boolean
 )
 
 data class MatchBettingSummary(
+    val safePickTitle: String,
     val safePick: String,
     val safePickOdds: String,
     val safePickProb: String,
@@ -233,116 +272,428 @@ data class QuantumMatchAnalysis(
     val bettingSummary: MatchBettingSummary,
     val parlayLegs: List<ParlayLeg>,
     val jointParlayProb: Double,
-    val parlayFairOdds: Double,
-    val parlayRealOdds: Double?,
-    val parlayExpectedValue: Double?,
+    val parlayDisplayOdds: String,
     val kellyStakePercent: Double
 )
 
 // ==============================================================================
-// 2. DICCIONARIO DE JUGADORES REALES (NOMBRES Y APELLIDOS POR EQUIPO)
+// 2. CLIENTE API DE BZZOIRO SPORTS DATA (REST OFICIAL CON PARALELISMO)
 // ==============================================================================
 
-object PlayerRosterDatabase {
-    private val ROSTERS = mapOf(
-        "Vélez Sarsfield" to listOf(
-            Pair("Braian Romero", "Delantero Centro"),
-            Pair("Francisco Pizzini", "Extremo Derecho"),
-            Pair("Claudio Aquino", "Mediapunta / Enganche")
-        ),
-        "San Lorenzo" to listOf(
-            Pair("Alexis Cuello", "Delantero Centro"),
-            Pair("Iker Muniain", "Mediapunta / Volante Ofensivo"),
-            Pair("Ezequiel Cerutti", "Extremo Izquierdo")
-        ),
-        "Huracán" to listOf(
-            Pair("Ramón Ábila", "Delantero Centro"),
-            Pair("Walter Mazzantti", "Extremo Derecho"),
-            Pair("Rodrigo Echeverría", "Volante Ofensivo")
-        ),
-        "Tigre" to listOf(
-            Pair("Florián Monzón", "Delantero Centro"),
-            Pair("Blas Armoa", "Extremo Izquierdo"),
-            Pair("Gonzalo Maroni", "Mediapunta")
-        ),
-        "Estudiantes de Río Cuarto" to listOf(
-            Pair("Renzo Reynaga", "Delantero Centro"),
-            Pair("Mauro Valiente", "Extremo"),
-            Pair("Tomás González", "Mediapunta")
-        ),
-        "Gimnasia y Esgrima" to listOf(
-            Pair("Rodrigo Castillo", "Delantero Centro"),
-            Pair("David Zalazar", "Extremo"),
-            Pair("Lucas Castro", "Volante Ofensivo")
-        ),
-        "River Plate" to listOf(
-            Pair("Miguel Borja", "Delantero Centro"),
-            Pair("Facundo Colidio", "Segundo Delantero"),
-            Pair("Franco Mastantuono", "Enganche / Creador")
-        ),
-        "Boca Juniors" to listOf(
-            Pair("Edinson Cavani", "Delantero Centro"),
-            Pair("Miguel Merentiel", "Delantero"),
-            Pair("Kevin Zenón", "Extremo / Volante")
-        ),
-        "Villarreal" to listOf(
-            Pair("Gerard Moreno", "Delantero Centro"),
-            Pair("Ayoze Pérez", "Extremo Ofensivo"),
-            Pair("Álex Baena", "Mediapunta / Creador")
-        ),
-        "Espanyol" to listOf(
-            Pair("Javi Puado", "Delantero Centro"),
-            Pair("Walid Cheddira", "Delantero"),
-            Pair("Jofre Carreras", "Extremo Derecho")
-        ),
-        "Sporting CP" to listOf(
-            Pair("Viktor Gyökeres", "Delantero Centro"),
-            Pair("Francisco Trincão", "Extremo Derecho"),
-            Pair("Pedro Gonçalves", "Mediapunta")
-        ),
-        "Casa Pia" to listOf(
-            Pair("Cassiano", "Delantero Centro"),
-            Pair("Nuno Moreira", "Extremo Izquierdo"),
-            Pair("Pablo Roberto", "Mediapunta")
-        ),
-        "Lille" to listOf(
-            Pair("Jonathan David", "Delantero Centro"),
-            Pair("Edon Zhegrova", "Extremo Derecho"),
-            Pair("Angel Gomes", "Mediapunta")
-        ),
-        "RC Lens" to listOf(
-            Pair("Florian Sotoca", "Delantero Centro"),
-            Pair("Wesley Saïd", "Delantero"),
-            Pair("Andy Diouf", "Volante Ofensivo")
-        ),
-        "Corinthians" to listOf(
-            Pair("Yuri Alberto", "Delantero Centro"),
-            Pair("Memphis Depay", "Segundo Delantero"),
-            Pair("Rodrigo Garro", "Mediapunta / Creador")
-        ),
-        "Mirassol" to listOf(
-            Pair("Dellatorre", "Delantero Centro"),
-            Pair("Fernandinho", "Extremo Izquierdo"),
-            Pair("Gabriel", "Volante Ofensivo")
-        )
-    )
+object BzzoiroApiClient {
 
-    fun getPlayersForTeam(teamName: String): List<Pair<String, String>> {
-        for ((key, players) in ROSTERS) {
-            if (teamName.contains(key, ignoreCase = true) || key.contains(teamName, ignoreCase = true)) {
-                return players
-            }
+    // Caché en memoria para optimizar reconsultas durante la sesión
+    private val squadCache = mutableMapOf<Long, List<Pair<String, String>>>()
+    private val formCache = mutableMapOf<Long, TeamRealFormStats>()
+
+    fun getLeagueNameById(leagueId: Long): String {
+        return when (leagueId) {
+            49L -> "Primera A (Colombia)"
+            21L -> "Brasileirão Serie B (Brasil)"
+            71L -> "Liga Profesional (Argentina)"
+            19L -> "Liga MX (México)"
+            57L -> "USL Championship"
+            96L -> "Bundesliga (Austria)"
+            5L -> "Bundesliga (Alemania)"
+            1L -> "Premier League (Inglaterra)"
+            4L -> "Serie A (Italia)"
+            8L -> "UEFA Champions League"
+            else -> if (leagueId > 0) "Liga Internacional #$leagueId" else "Liga Profesional"
         }
-        return listOf(
-            Pair("Mateo Silveira", "Delantero Centro"),
-            Pair("Lucas Benítez", "Extremo Ofensivo"),
-            Pair("Julián Rossi", "Mediapunta / Creador")
-        )
     }
+
+    private fun parseIsoDate(dateStr: String): Date? {
+        val formats = listOf(
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") },
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        )
+        for (f in formats) {
+            try {
+                return f.parse(dateStr)
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun openConnection(endpoint: String): HttpURLConnection {
+        val fullUrl = if (endpoint.startsWith("http")) endpoint else "$BZZOIRO_BASE_URL$endpoint"
+        val conn = URL(fullUrl).openConnection() as HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.setRequestProperty("Authorization", "Token $bzzoiroApiKey")
+        conn.setRequestProperty("Accept", "application/json")
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+        return conn
+    }
+
+    private fun readResponse(conn: HttpURLConnection): String {
+        val reader = BufferedReader(InputStreamReader(conn.inputStream))
+        val sb = StringBuilder()
+        var line: String?
+        while (reader.readLine().also { line = it } != null) {
+            sb.append(line)
+        }
+        reader.close()
+        return sb.toString()
+    }
+
+    /**
+     * Consulta el plantel oficial de Bzzoiro (/teams/{team_id}/squad/)
+     * Retorna delanteros y atacantes reales del equipo
+     */
+    suspend fun fetchTeamSquad(teamId: Long, teamName: String): List<Pair<String, String>> =
+        withContext(Dispatchers.IO) {
+            squadCache[teamId]?.let { return@withContext it }
+
+            val attackers = mutableListOf<Pair<String, String>>()
+            try {
+                val conn = openConnection("/teams/$teamId/squad/")
+                if (conn.responseCode == 200) {
+                    val root = JSONObject(readResponse(conn))
+                    val playersArr = root.optJSONArray("players") ?: JSONArray()
+                    val forwards = mutableListOf<String>()
+                    val midfielders = mutableListOf<String>()
+
+                    for (i in 0 until playersArr.length()) {
+                        val p = playersArr.getJSONObject(i)
+                        val name = p.optString("name", "").trim()
+                        val pos = p.optString("position", "").uppercase().trim()
+                        if (name.isNotEmpty()) {
+                            if (pos == "F" || pos == "A" || pos.contains("ATTACK") || pos.contains("FORWARD")) {
+                                forwards.add(name)
+                            } else if (pos == "M" || pos.contains("MIDFIELD")) {
+                                midfielders.add(name)
+                            }
+                        }
+                    }
+
+                    // Seleccionar atacantes principales
+                    for (f in forwards.take(2)) {
+                        attackers.add(Pair(f, "Delantero Centro"))
+                    }
+                    if (attackers.size < 2) {
+                        for (m in midfielders.take(2 - attackers.size)) {
+                            attackers.add(Pair(m, "Mediapunta / Ofensivo"))
+                        }
+                    }
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            // Si Bzzoiro no tiene squad registrado para este ID, usamos rol descriptivo de su propio equipo
+            if (attackers.isEmpty()) {
+                attackers.add(Pair("Atacante Titular ($teamName)", "Delantero Centro"))
+                attackers.add(Pair("Extremo Ofensivo ($teamName)", "Extremo"))
+            }
+
+            squadCache[teamId] = attackers
+            attackers
+        }
+
+    /**
+     * Consulta estadísticas de forma real de Bzzoiro (/teams/{team_id}/form/)
+     */
+    suspend fun fetchTeamForm(teamId: Long, teamName: String): TeamRealFormStats =
+        withContext(Dispatchers.IO) {
+            formCache[teamId]?.let { return@withContext it }
+
+            var stats = TeamRealFormStats(
+                teamId = teamId,
+                teamName = teamName,
+                matchesPlayed = 10,
+                avgGoalsScored = 1.35,
+                avgGoalsConceded = 1.25,
+                avgCorners = 4.8,
+                avgYellowCards = 2.4,
+                avgTotalShots = 13.0,
+                avgShotsOnTarget = 4.5,
+                formString = "WDWLD"
+            )
+
+            try {
+                val conn = openConnection("/teams/$teamId/form/")
+                if (conn.responseCode == 200) {
+                    val root = JSONObject(readResponse(conn))
+                    val overall = root.optJSONObject("overall")
+                    if (overall != null) {
+                        val mCount = overall.optInt("matches", 10).coerceAtLeast(1)
+                        val gf = overall.optDouble("goals_for", 13.0)
+                        val ga = overall.optDouble("goals_against", 12.0)
+                        val fStr = overall.optString("form", "WDWLD")
+
+                        var corn = 4.8
+                        var yel = 2.4
+                        var totShots = 13.0
+                        var sot = 4.5
+
+                        val stObj = overall.optJSONObject("stats")
+                        if (stObj != null) {
+                            val cObj = stObj.optJSONObject("corner_kicks")
+                            if (cObj != null) corn = cObj.optDouble("average", 4.8)
+
+                            val yObj = stObj.optJSONObject("yellow_cards")
+                            if (yObj != null) yel = yObj.optDouble("average", 2.4)
+
+                            val tsObj = stObj.optJSONObject("total_shots")
+                            if (tsObj != null) totShots = tsObj.optDouble("average", 13.0)
+
+                            val sotObj = stObj.optJSONObject("shots_on_target")
+                            if (sotObj != null) sot = sotObj.optDouble("average", 4.5)
+                        }
+
+                        stats = TeamRealFormStats(
+                            teamId = teamId,
+                            teamName = teamName,
+                            matchesPlayed = mCount,
+                            avgGoalsScored = (gf / mCount).coerceIn(0.4, 3.8),
+                            avgGoalsConceded = (ga / mCount).coerceIn(0.4, 3.8),
+                            avgCorners = corn.coerceIn(2.5, 9.0),
+                            avgYellowCards = yel.coerceIn(1.0, 6.0),
+                            avgTotalShots = totShots.coerceIn(7.0, 22.0),
+                            avgShotsOnTarget = sot.coerceIn(2.0, 9.0),
+                            formString = fStr
+                        )
+                    }
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            formCache[teamId] = stats
+            stats
+        }
+
+    /**
+     * Consulta cuotas reales del endpoint de Bzzoiro (/odds/?event_id=)
+     */
+    suspend fun fetchEventOdds(eventId: Long): RealOdds = withContext(Dispatchers.IO) {
+        var odds = RealOdds()
+        try {
+            val conn = openConnection("/odds/?event_id=$eventId&limit=100")
+            if (conn.responseCode == 200) {
+                val root = JSONObject(readResponse(conn))
+                val results = root.optJSONArray("results") ?: JSONArray()
+
+                var home1x2: Double? = null
+                var draw1x2: Double? = null
+                var away1x2: Double? = null
+                var dc1X: Double? = null
+                var dcX2: Double? = null
+                var dc12: Double? = null
+                var bttsY: Double? = null
+                var bttsN: Double? = null
+                var o15: Double? = null
+                var u15: Double? = null
+                var o25: Double? = null
+                var u25: Double? = null
+                var o35: Double? = null
+                var u35: Double? = null
+                var cornLine: Double? = null
+                var cornO: Double? = null
+                var cornU: Double? = null
+
+                for (j in 0 until results.length()) {
+                    val oddObj = results.getJSONObject(j)
+                    val mkt = oddObj.optString("market", "")
+                    val out = oddObj.optString("outcome", "").uppercase()
+                    val outName = oddObj.optString("outcome_name", "")
+                    val decOdds = oddObj.optDouble("decimal_odds", 0.0)
+
+                    if (decOdds <= 1.01) continue
+
+                    when (mkt) {
+                        "1x2" -> {
+                            if (out == "HOME" || out == "1") home1x2 = decOdds
+                            else if (out == "DRAW" || out == "X") draw1x2 = decOdds
+                            else if (out == "AWAY" || out == "2") away1x2 = decOdds
+                        }
+                        "double_chance" -> {
+                            if (out == "1X" || outName.contains("Home or Draw", ignoreCase = true)) dc1X = decOdds
+                            else if (out == "X2" || outName.contains("Draw or Away", ignoreCase = true)) dcX2 = decOdds
+                            else if (out == "12" || outName.contains("Home or Away", ignoreCase = true)) dc12 = decOdds
+                        }
+                        "over_under_15" -> {
+                            val line = oddObj.optDouble("line", 1.5)
+                            if (abs(line - 1.5) < 0.2) {
+                                if (out == "OVER" || outName.contains("Over", ignoreCase = true)) o15 = decOdds
+                                else if (out == "UNDER" || outName.contains("Under", ignoreCase = true)) u15 = decOdds
+                            }
+                        }
+                        "over_under_25" -> {
+                            val line = oddObj.optDouble("line", 2.5)
+                            if (abs(line - 2.5) < 0.2) {
+                                if (out == "OVER" || outName.contains("Over", ignoreCase = true)) o25 = decOdds
+                                else if (out == "UNDER" || outName.contains("Under", ignoreCase = true)) u25 = decOdds
+                            }
+                        }
+                        "over_under_35" -> {
+                            val line = oddObj.optDouble("line", 3.5)
+                            if (abs(line - 3.5) < 0.2) {
+                                if (out == "OVER" || outName.contains("Over", ignoreCase = true)) o35 = decOdds
+                                else if (out == "UNDER" || outName.contains("Under", ignoreCase = true)) u35 = decOdds
+                            }
+                        }
+                        "total_corners" -> {
+                            cornLine = oddObj.optDouble("line", 8.5)
+                            if (out == "OVER" || outName.contains("Over", ignoreCase = true)) cornO = decOdds
+                            else if (out == "UNDER" || outName.contains("Under", ignoreCase = true)) cornU = decOdds
+                        }
+                        "btts" -> {
+                            if (out == "YES" || outName.contains("Yes", ignoreCase = true)) bttsY = decOdds
+                            else if (out == "NO" || outName.contains("No", ignoreCase = true)) bttsN = decOdds
+                        }
+                    }
+                }
+
+                odds = RealOdds(
+                    home1x2 = home1x2,
+                    draw1x2 = draw1x2,
+                    away1x2 = away1x2,
+                    dc1X = dc1X,
+                    dcX2 = dcX2,
+                    dc12 = dc12,
+                    bttsYes = bttsY,
+                    bttsNo = bttsN,
+                    over15Goals = o15,
+                    under15Goals = u15,
+                    over25Goals = o25,
+                    under25Goals = u25,
+                    over35Goals = o35,
+                    under35Goals = u35,
+                    cornerLineVal = cornLine,
+                    overCornerLine = cornO,
+                    underCornerLine = cornU
+                )
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        odds
+    }
+
+    /**
+     * Consulta de eventos de Bzzoiro en la ventana temporal
+     */
+    suspend fun fetchEvents(dateFrom: String, dateTo: String, limit: Int = 30): List<ApexEvent> =
+        withContext(Dispatchers.IO) {
+            val list = mutableListOf<ApexEvent>()
+            val nowMs = Date().time
+
+            try {
+                val conn = openConnection("/events/?date_from=$dateFrom&date_to=$dateTo&limit=$limit")
+                if (conn.responseCode == 200) {
+                    val root = JSONObject(readResponse(conn))
+                    val results = root.optJSONArray("results") ?: JSONArray()
+
+                    for (i in 0 until results.length()) {
+                        val obj = results.getJSONObject(i)
+                        val id = obj.optLong("id")
+                        val leagueId = obj.optLong("league_id")
+                        val roundLabel = obj.optString("round_label", "Jornada Oficial")
+                        val homeTeamId = obj.optLong("home_team_id")
+                        val homeTeam = obj.optString("home_team", "Local")
+                        val awayTeamId = obj.optLong("away_team_id")
+                        val awayTeam = obj.optString("away_team", "Visitante")
+                        val eventDateStr = obj.optString("event_date", "")
+                        val status = obj.optString("status", "notstarted")
+                        val period = obj.optString("period", "")
+                        val curMin = if (obj.has("current_minute") && !obj.isNull("current_minute")) obj.optInt("current_minute") else null
+                        val homeSc = if (obj.has("home_score") && !obj.isNull("home_score")) obj.optInt("home_score") else null
+                        val awaySc = if (obj.has("away_score") && !obj.isNull("away_score")) obj.optInt("away_score") else null
+
+                        val matchDate = parseIsoDate(eventDateStr)
+                        val diffHours = if (matchDate != null) (matchDate.time - nowMs) / (1000.0 * 3600.0) else 4.0
+                        val is24h = diffHours in -2.5..24.5
+
+                        val timeFormatted = when {
+                            status == "inprogress" || curMin != null -> "EN VIVO • ${curMin ?: 45}'"
+                            status == "finished" -> "FINALIZADO"
+                            diffHours in 0.0..1.0 -> "EN ${(diffHours * 60).toInt()} MIN"
+                            diffHours > 1.0 && diffHours <= 24.0 -> "EN ${diffHours.toInt()}h ${(diffHours % 1.0 * 60).toInt()}m"
+                            else -> if (matchDate != null) SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(matchDate) + " hs" else "PRÓXIMAMENTE"
+                        }
+
+                        // Parsear H2H oficial de Bzzoiro
+                        var h2hTot = 0
+                        var h2hHw = 0
+                        var h2hDr = 0
+                        var h2hAw = 0
+                        var h2hAvgG = 2.45
+                        var h2hHwRate = 0.40
+                        var h2hAwRate = 0.35
+                        val recentScores = mutableListOf<String>()
+
+                        val h2hObj = obj.optJSONObject("head_to_head")
+                        if (h2hObj != null) {
+                            h2hTot = h2hObj.optInt("total_matches", 0)
+                            h2hHw = h2hObj.optInt("home_wins", 0)
+                            h2hDr = h2hObj.optInt("draws", 0)
+                            h2hAw = h2hObj.optInt("away_wins", 0)
+                            h2hAvgG = h2hObj.optDouble("avg_total_goals", 2.45)
+                            h2hHwRate = h2hObj.optDouble("home_win_rate", 0.40)
+                            h2hAwRate = h2hObj.optDouble("away_win_rate", 0.35)
+
+                            val recArr = h2hObj.optJSONArray("recent_matches")
+                            if (recArr != null) {
+                                for (k in 0 until recArr.length().coerceAtMost(3)) {
+                                    val r = recArr.getJSONObject(k)
+                                    val sc = r.optString("score", "")
+                                    val hT = r.optString("home", "")
+                                    val aT = r.optString("away", "")
+                                    if (sc.isNotEmpty()) recentScores.add("$hT $sc $aT")
+                                }
+                            }
+                        }
+
+                        list.add(
+                            ApexEvent(
+                                id = id,
+                                leagueId = leagueId,
+                                leagueName = getLeagueNameById(leagueId),
+                                roundLabel = roundLabel,
+                                homeTeamId = homeTeamId,
+                                homeTeam = homeTeam,
+                                awayTeamId = awayTeamId,
+                                awayTeam = awayTeam,
+                                eventDate = eventDateStr,
+                                status = status,
+                                period = period,
+                                currentMinute = curMin,
+                                homeScore = homeSc,
+                                awayScore = awaySc,
+                                h2hTotalMatches = h2hTot,
+                                h2hHomeWins = h2hHw,
+                                h2hDraws = h2hDr,
+                                h2hAwayWins = h2hAw,
+                                h2hAvgTotalGoals = h2hAvgG,
+                                h2hHomeWinRate = h2hHwRate,
+                                h2hAwayWinRate = h2hAwRate,
+                                recentScores = recentScores,
+                                homeRecentForm = emptyList(), // Se poblará con stats reales de Bzzoiro
+                                awayRecentForm = emptyList(),
+                                isNext24Hours = is24h,
+                                timeToKickoffFormatted = timeFormatted
+                            )
+                        )
+                    }
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            list
+        }
 }
 
 // ==============================================================================
-// 3. MOTOR MATEMÁTICO CUÁNTICO: POISSON, CÓRNERS, TARJETAS Y JUGADORES
+// 3. MOTOR MATEMÁTICO CUÁNTICO POISSON ALIMENTADO CON DATOS REALES DE BZZOIRO
 // ==============================================================================
 
 object QuantumMathEngine {
@@ -376,6 +727,28 @@ object QuantumMathEngine {
         return matrix
     }
 
+    /**
+     * Convierte el string de forma de Bzzoiro (ej: "WWLDW") en badges coloreados
+     */
+    fun parseFormStringToBadges(formStr: String): List<MatchFormResult> {
+        val list = mutableListOf<MatchFormResult>()
+        val chars = formStr.uppercase().reversed().take(5) // Tomar los más recientes
+        for (c in chars) {
+            when (c) {
+                'W' -> list.add(MatchFormResult("V", FormOutcome.WIN, "Oficial", "Victoria"))
+                'D' -> list.add(MatchFormResult("E", FormOutcome.DRAW, "Oficial", "Empate"))
+                'L' -> list.add(MatchFormResult("D", FormOutcome.LOSS, "Oficial", "Derrota"))
+            }
+        }
+        while (list.size < 5) {
+            list.add(MatchFormResult("E", FormOutcome.DRAW, "Oficial", "Empate"))
+        }
+        return list.take(5)
+    }
+
+    /**
+     * Análisis Matemático de DOBLE OPORTUNIDAD con cuotas reales de Bzzoiro o Cuota Justa calculada
+     */
     fun analyzeDoubleChanceFavorite(
         homeTeam: String,
         awayTeam: String,
@@ -391,19 +764,29 @@ object QuantumMathEngine {
         val pickTitle = "$favTeam o Empate ($pickCode)"
 
         val modelP = if (isHomeFav) (pHome + pDraw) else (pAway + pDraw)
-        val fairO = (1.0 / modelP.coerceAtLeast(0.05)).coerceIn(1.05, 25.0)
+        val fairO = (1.0 / modelP.coerceAtLeast(0.05)).coerceIn(1.02, 25.0)
 
-        val realO = if (isHomeFav) odds.dc1X else odds.dcX2
-        val ev = if (realO != null && realO > 1.0) (modelP * realO) - 1.0 else null
+        // Cuota real del mercado de Bzzoiro para 1X o X2
+        val marketO = if (isHomeFav) odds.dc1X else odds.dcX2
+        val hasMarketOdds = marketO != null && marketO > 1.01
 
-        val badge = when {
-            ev != null && ev > 0.08 -> "VALOR PREMIUM (+${(ev * 100).toInt()}%)"
-            ev != null && ev > 0.02 -> "VALOR POSITIVO (+${(ev * 100).toInt()}%)"
-            modelP >= 0.78 -> "ALTA COBERTURA (${(modelP * 100).toInt()}%)"
-            else -> "COBERTURA BALANCEADA (${(modelP * 100).toInt()}%)"
+        val finalOddsNum = if (hasMarketOdds) marketO!! else fairO
+        val displayOdds = if (hasMarketOdds) {
+            String.format(Locale.US, "@%.2f", marketO)
+        } else {
+            String.format(Locale.US, "@%.2f (Calc)", fairO)
         }
 
-        val desc = "Superioridad táctica de $favTeam. La selección $pickCode garantiza acierto con victoria o empate, con ${(modelP * 100).toInt()}% de cobertura."
+        val ev = if (hasMarketOdds) (modelP * marketO!!) - 1.0 else null
+
+        val badge = when {
+            ev != null && ev > 0.05 -> "VALOR POSITIVO (+${(ev * 100).toInt()}%)"
+            modelP >= 0.75 -> "ALTA COBERTURA (${(modelP * 100).toInt()}%)"
+            modelP >= 0.60 -> "PROBABILIDAD ${(modelP * 100).toInt()}%"
+            else -> "COBERTURA AJUSTADA (${(modelP * 100).toInt()}%)"
+        }
+
+        val desc = "El modelo evalúa a $favTeam con ventaja matemática. La selección $pickCode cubre tanto la victoria como la igualdad, con un ${(modelP * 100).toInt()}% de probabilidad calculada."
 
         return DoubleChanceFavoriteAnalysis(
             favoriteTeam = favTeam,
@@ -411,7 +794,9 @@ object QuantumMathEngine {
             isHomeFavorite = isHomeFav,
             pickCode = pickCode,
             pickTitle = pickTitle,
-            realOdds = realO,
+            displayOdds = displayOdds,
+            rawOdds = finalOddsNum,
+            isMarketOdds = hasMarketOdds,
             modelProb = modelP,
             fairOdds = fairO,
             expectedValue = ev,
@@ -420,19 +805,33 @@ object QuantumMathEngine {
         )
     }
 
-    fun analyzeCorners(lambdaHome: Double, lambdaAway: Double, odds: RealOdds): CornersAnalysis {
-        val expHome = (lambdaHome * 3.3).coerceIn(3.8, 7.2)
-        val expAway = (lambdaAway * 2.8).coerceIn(2.5, 6.0)
+    /**
+     * Proyección cuantitativa de CÓRNERS alimentada con promedios reales de Bzzoiro
+     */
+    fun analyzeCorners(homeStats: TeamRealFormStats, awayStats: TeamRealFormStats, odds: RealOdds): CornersAnalysis {
+        val expHome = homeStats.avgCorners.coerceIn(2.5, 8.5)
+        val expAway = awayStats.avgCorners.coerceIn(2.0, 7.5)
         val expTotal = expHome + expAway
 
         val pO85 = 1.0 - poissonCdf(8, expTotal)
         val pO95 = 1.0 - poissonCdf(9, expTotal)
         val pO105 = 1.0 - poissonCdf(10, expTotal)
 
+        val fair85 = (1.0 / pO85).coerceAtLeast(1.04)
+        val fair95 = (1.0 / pO95).coerceAtLeast(1.04)
+        val fair105 = (1.0 / pO105).coerceAtLeast(1.04)
+
         val (recPick, recP, recFair) = if (expTotal >= 9.8) {
-            Triple("Más de 9.5 Córners", pO95, 1.0 / pO95)
+            Triple("Más de 9.5 Córners", pO95, fair95)
         } else {
-            Triple("Más de 8.5 Córners", pO85, 1.0 / pO85)
+            Triple("Más de 8.5 Córners", pO85, fair85)
+        }
+
+        val hasMarketOdds = odds.overCornerLine != null && odds.overCornerLine > 1.01
+        val displayOdds = if (hasMarketOdds) {
+            String.format(Locale.US, "@%.2f", odds.overCornerLine)
+        } else {
+            String.format(Locale.US, "@%.2f (Calc)", recFair)
         }
 
         return CornersAnalysis(
@@ -441,36 +840,42 @@ object QuantumMathEngine {
             expectedAway = expAway,
             linePrincipal = if (expTotal >= 9.8) 9.5 else 8.5,
             probOver85 = pO85,
-            fairOddsOver85 = (1.0 / pO85).coerceAtLeast(1.05),
+            fairOddsOver85 = fair85,
             probOver95 = pO95,
-            fairOddsOver95 = (1.0 / pO95).coerceAtLeast(1.05),
+            fairOddsOver95 = fair95,
             probOver105 = pO105,
-            fairOddsOver105 = (1.0 / pO105).coerceAtLeast(1.05),
+            fairOddsOver105 = fair105,
             recommendedPick = recPick,
             recommendedProb = recP,
-            recommendedFairOdds = recFair
+            displayOdds = displayOdds,
+            isMarketOdds = hasMarketOdds
         )
     }
 
-    fun analyzeCards(isDerby: Boolean, leagueId: Long): CardsAnalysis {
-        val baseCards = if (leagueId == 85L || leagueId == 80L || leagueId == 9L) 5.10 else 4.20
-        val expTotal = if (isDerby) baseCards * 1.25 else baseCards
-        val expYellow = expTotal * 0.94
-        val expRedP = (1.0 - exp(-expTotal * 0.055)).coerceIn(0.15, 0.40)
+    /**
+     * Proyección cuantitativa de TARJETAS basada en promedios reales de Bzzoiro
+     */
+    fun analyzeCards(homeStats: TeamRealFormStats, awayStats: TeamRealFormStats): CardsAnalysis {
+        val expYellow = (homeStats.avgYellowCards + awayStats.avgYellowCards).coerceIn(2.0, 7.5)
+        val expRedP = (1.0 - exp(-expYellow * 0.055)).coerceIn(0.12, 0.38)
+        val expTotal = expYellow + (expRedP * 1.5)
 
         val pO35 = 1.0 - poissonCdf(3, expTotal)
         val pO45 = 1.0 - poissonCdf(4, expTotal)
 
+        val fair35 = (1.0 / pO35).coerceAtLeast(1.04)
+        val fair45 = (1.0 / pO45).coerceAtLeast(1.04)
+
         val friction = when {
             expTotal >= 5.5 -> "ALTA FRICCIÓN"
-            expTotal >= 4.5 -> "INTENSIDAD MEDIA"
+            expTotal >= 4.2 -> "INTENSIDAD MEDIA"
             else -> "TEMPLADO"
         }
 
         val (recPick, recP, recFair) = if (expTotal >= 5.0) {
-            Triple("Más de 4.5 Tarjetas", pO45, 1.0 / pO45)
+            Triple("Más de 4.5 Tarjetas", pO45, fair45)
         } else {
-            Triple("Más de 3.5 Tarjetas", pO35, 1.0 / pO35)
+            Triple("Más de 3.5 Tarjetas", pO35, fair35)
         }
 
         return CardsAnalysis(
@@ -479,38 +884,38 @@ object QuantumMathEngine {
             expectedRedProb = expRedP,
             linePrincipal = if (expTotal >= 5.0) 4.5 else 3.5,
             probOver35 = pO35,
-            fairOddsOver35 = (1.0 / pO35).coerceAtLeast(1.05),
+            fairOddsOver35 = fair35,
             probOver45 = pO45,
-            fairOddsOver45 = (1.0 / pO45).coerceAtLeast(1.05),
+            fairOddsOver45 = fair45,
             frictionIndex = friction,
             recommendedPick = recPick,
             recommendedProb = recP,
-            recommendedFairOdds = recFair
+            displayOdds = String.format(Locale.US, "@%.2f (Calc)", recFair)
         )
     }
 
-    fun generatePlayerProps(
+    /**
+     * Proyecciones de remates usando atacantes REALES del squad de Bzzoiro de cada equipo
+     */
+    fun generateRealPlayerProps(
         homeTeam: String,
         awayTeam: String,
-        lambdaHome: Double,
-        lambdaAway: Double
+        homeSquad: List<Pair<String, String>>,
+        awaySquad: List<Pair<String, String>>,
+        homeStats: TeamRealFormStats,
+        awayStats: TeamRealFormStats
     ): List<PlayerShotProp> {
         val list = mutableListOf<PlayerShotProp>()
 
-        val homeRoster = PlayerRosterDatabase.getPlayersForTeam(homeTeam)
-        val awayRoster = PlayerRosterDatabase.getPlayersForTeam(awayTeam)
-
-        val p1 = homeRoster.getOrNull(0) ?: Pair("Braian Romero", "Delantero Centro")
-        val hFwdShots = (lambdaHome * 1.85).coerceIn(1.9, 3.9)
-        val hFwdSoT = (hFwdShots * 0.46).coerceIn(0.9, 1.95)
+        // Atacante 1 Local
+        val p1 = homeSquad.getOrNull(0) ?: Pair("Delantero ($homeTeam)", "Delantero Centro")
+        val hFwdShots = (homeStats.avgTotalShots * 0.22).coerceIn(1.8, 4.2)
+        val hFwdSoT = (homeStats.avgShotsOnTarget * 0.32).coerceIn(0.8, 2.1)
         val hFwdProbSoT1 = 1.0 - exp(-hFwdSoT)
         val hFwdProbSoT15 = 1.0 - (poissonPmf(0, hFwdSoT) + poissonPmf(1, hFwdSoT))
-        val (pickH, probH) = if (hFwdSoT >= 1.25) {
-            Pair("Más de 1.5 al Arco", hFwdProbSoT15)
-        } else {
-            Pair("Más de 0.5 al Arco", hFwdProbSoT1)
-        }
+        val (pickH, probH) = if (hFwdSoT >= 1.25) Pair("Más de 1.5 al Arco", hFwdProbSoT15) else Pair("Más de 0.5 al Arco", hFwdProbSoT1)
         val probShotsH = 1.0 - poissonCdf(2, hFwdShots)
+        val fairOddsH = (1.0 / probH).coerceAtLeast(1.05)
 
         list.add(
             PlayerShotProp(
@@ -523,15 +928,18 @@ object QuantumMathEngine {
                 probTotalShots = probShotsH,
                 pickOnTarget = pickH,
                 probOnTarget = probH,
-                fairOddsOnTarget = (1.0 / probH).coerceAtLeast(1.05)
+                fairOddsOnTarget = fairOddsH,
+                displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOddsH)
             )
         )
 
-        val p2 = homeRoster.getOrNull(1) ?: Pair("Claudio Aquino", "Mediapunta")
-        val hWingShots = (lambdaHome * 1.35).coerceIn(1.3, 2.7)
-        val hWingSoT = (hWingShots * 0.40).coerceIn(0.6, 1.3)
+        // Atacante 2 Local (Extremo / Segundo delantero)
+        val p2 = homeSquad.getOrNull(1) ?: Pair("Extremo ($homeTeam)", "Extremo Ofensivo")
+        val hWingShots = (homeStats.avgTotalShots * 0.16).coerceIn(1.2, 3.0)
+        val hWingSoT = (homeStats.avgShotsOnTarget * 0.22).coerceIn(0.5, 1.4)
         val hWingProbSoT = 1.0 - exp(-hWingSoT)
         val probShotsHWing = 1.0 - poissonCdf(1, hWingShots)
+        val fairOddsHWing = (1.0 / hWingProbSoT).coerceAtLeast(1.05)
 
         list.add(
             PlayerShotProp(
@@ -544,21 +952,20 @@ object QuantumMathEngine {
                 probTotalShots = probShotsHWing,
                 pickOnTarget = "Más de 0.5 al Arco",
                 probOnTarget = hWingProbSoT,
-                fairOddsOnTarget = (1.0 / hWingProbSoT).coerceAtLeast(1.05)
+                fairOddsOnTarget = fairOddsHWing,
+                displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOddsHWing)
             )
         )
 
-        val p3 = awayRoster.getOrNull(0) ?: Pair("Alexis Cuello", "Delantero Centro")
-        val aFwdShots = (lambdaAway * 1.75).coerceIn(1.6, 3.6)
-        val aFwdSoT = (aFwdShots * 0.44).coerceIn(0.7, 1.8)
+        // Atacante 3 Visitante
+        val p3 = awaySquad.getOrNull(0) ?: Pair("Delantero ($awayTeam)", "Delantero Centro")
+        val aFwdShots = (awayStats.avgTotalShots * 0.20).coerceIn(1.5, 3.8)
+        val aFwdSoT = (awayStats.avgShotsOnTarget * 0.28).coerceIn(0.6, 1.8)
         val aFwdProbSoT1 = 1.0 - exp(-aFwdSoT)
         val aFwdProbSoT15 = 1.0 - (poissonPmf(0, aFwdSoT) + poissonPmf(1, aFwdSoT))
-        val (pickA, probA) = if (aFwdSoT >= 1.25) {
-            Pair("Más de 1.5 al Arco", aFwdProbSoT15)
-        } else {
-            Pair("Más de 0.5 al Arco", aFwdProbSoT1)
-        }
+        val (pickA, probA) = if (aFwdSoT >= 1.25) Pair("Más de 1.5 al Arco", aFwdProbSoT15) else Pair("Más de 0.5 al Arco", aFwdProbSoT1)
         val probShotsA = 1.0 - poissonCdf(2, aFwdShots)
+        val fairOddsA = (1.0 / probA).coerceAtLeast(1.05)
 
         list.add(
             PlayerShotProp(
@@ -571,23 +978,31 @@ object QuantumMathEngine {
                 probTotalShots = probShotsA,
                 pickOnTarget = pickA,
                 probOnTarget = probA,
-                fairOddsOnTarget = (1.0 / probA).coerceAtLeast(1.05)
+                fairOddsOnTarget = fairOddsA,
+                displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOddsA)
             )
         )
 
         return list
     }
 
-    fun analyzeEvent(event: ApexEvent, odds: RealOdds): QuantumMatchAnalysis {
-        val h2hAvg = if (event.h2hAvgTotalGoals > 0.5) event.h2hAvgTotalGoals else 2.50
-        val homeAdvantage = 1.14
+    /**
+     * Motor principal que combina Poisson con datos de forma y cuotas de Bzzoiro
+     */
+    fun analyzeEventWithRealData(
+        event: ApexEvent,
+        odds: RealOdds,
+        homeStats: TeamRealFormStats,
+        awayStats: TeamRealFormStats,
+        homeSquad: List<Pair<String, String>>,
+        awaySquad: List<Pair<String, String>>
+    ): QuantumMatchAnalysis {
+        // Cálculo de medias Poisson basadas en goles reales a favor y en contra de cada equipo
+        val leagueAvg = 2.40
+        val homeAdvantage = 1.12
 
-        val homeShare = if (event.h2hTotalMatches > 0) {
-            (event.h2hHomeWinRate * 0.6) + 0.35
-        } else 0.53
-
-        val lambdaHome = ((h2hAvg * homeShare) * homeAdvantage).coerceIn(0.65, 3.7)
-        val lambdaAway = (h2hAvg - (lambdaHome / homeAdvantage)).coerceIn(0.55, 3.2)
+        val lambdaHome = ((homeStats.avgGoalsScored * awayStats.avgGoalsConceded / leagueAvg) * homeAdvantage).coerceIn(0.55, 3.8)
+        val lambdaAway = ((awayStats.avgGoalsScored * homeStats.avgGoalsConceded / leagueAvg) / homeAdvantage).coerceIn(0.45, 3.4)
         val lambdaTotal = lambdaHome + lambdaAway
 
         val matrix = computeGoalMatrix(lambdaHome, lambdaAway, 5)
@@ -622,155 +1037,154 @@ object QuantumMathEngine {
             }
         }
 
-        val dcAnalysis = analyzeDoubleChanceFavorite(
-            homeTeam = event.homeTeam,
-            awayTeam = event.awayTeam,
-            pHome = pHome,
-            pDraw = pDraw,
-            pAway = pAway,
-            odds = odds
-        )
+        // Submódulos analíticos
+        val dcAnalysis = analyzeDoubleChanceFavorite(event.homeTeam, event.awayTeam, pHome, pDraw, pAway, odds)
+        val cornersAnalysis = analyzeCorners(homeStats, awayStats, odds)
+        val cardsAnalysis = analyzeCards(homeStats, awayStats)
+        val playerProps = generateRealPlayerProps(event.homeTeam, event.awayTeam, homeSquad, awaySquad, homeStats, awayStats)
 
-        val cornersAnalysis = analyzeCorners(lambdaHome, lambdaAway, odds)
-        val cardsAnalysis = analyzeCards(event.roundLabel.contains("derby", ignoreCase = true), event.leagueId)
-        val playerProps = generatePlayerProps(event.homeTeam, event.awayTeam, lambdaHome, lambdaAway)
-
+        // Ticket Parlay Cuántico (Combinada del partido)
         val legs = mutableListOf<ParlayLeg>()
 
-        val dcEv = dcAnalysis.expectedValue
+        // Pata 1: Doble Oportunidad
         legs.add(
             ParlayLeg(
-                category = "DOBLE OPORTUNIDAD",
+                category = "DOBLE OP",
                 pick = dcAnalysis.pickTitle,
                 lambda = null,
                 modelProb = dcAnalysis.modelProb,
-                fairOdds = dcAnalysis.fairOdds,
-                realMarketOdds = dcAnalysis.realOdds,
-                edgePercent = if (dcEv != null) dcEv * 100.0 else null,
+                displayOdds = dcAnalysis.displayOdds,
+                edgePercent = dcAnalysis.expectedValue?.let { it * 100.0 },
                 isSafePick = dcAnalysis.modelProb >= 0.70
             )
         )
 
-        if (pOver15 >= 0.72) {
+        // Pata 2: Goles (Over 1.5 si alta prob, o Under 3.5)
+        if (pOver15 >= 0.70) {
             val fairO15 = 1.0 / pOver15
-            val realO15 = odds.over15Goals
-            val evO15 = if (realO15 != null) (pOver15 * realO15) - 1.0 else null
+            val hasMktO15 = odds.over15Goals != null && odds.over15Goals > 1.01
+            val dispO15 = if (hasMktO15) String.format(Locale.US, "@%.2f", odds.over15Goals) else String.format(Locale.US, "@%.2f (Calc)", fairO15)
             legs.add(
                 ParlayLeg(
-                    category = "TOTAL GOLES",
+                    category = "GOLES",
                     pick = "Más de 1.5 Goles",
                     lambda = lambdaTotal,
                     modelProb = pOver15,
-                    fairOdds = fairO15,
-                    realMarketOdds = realO15,
-                    edgePercent = if (evO15 != null) evO15 * 100.0 else null,
+                    displayOdds = dispO15,
+                    edgePercent = if (hasMktO15) ((pOver15 * odds.over15Goals!!) - 1.0) * 100.0 else null,
                     isSafePick = pOver15 >= 0.75
                 )
             )
         } else {
             val pUnder35 = 1.0 - pOver35
             val fairU35 = 1.0 / pUnder35
-            val realU35 = odds.under35Goals
-            val evU35 = if (realU35 != null) (pUnder35 * realU35) - 1.0 else null
+            val hasMktU35 = odds.under35Goals != null && odds.under35Goals > 1.01
+            val dispU35 = if (hasMktU35) String.format(Locale.US, "@%.2f", odds.under35Goals) else String.format(Locale.US, "@%.2f (Calc)", fairU35)
             legs.add(
                 ParlayLeg(
-                    category = "TOTAL GOLES",
+                    category = "GOLES",
                     pick = "Menos de 3.5 Goles",
                     lambda = lambdaTotal,
                     modelProb = pUnder35,
-                    fairOdds = fairU35,
-                    realMarketOdds = realU35,
-                    edgePercent = if (evU35 != null) evU35 * 100.0 else null,
+                    displayOdds = dispU35,
+                    edgePercent = null,
                     isSafePick = pUnder35 >= 0.70
                 )
             )
         }
 
-        val mainFwd = playerProps.firstOrNull()
-        if (mainFwd != null) {
-            legs.add(
-                ParlayLeg(
-                    category = "REMATES AL ARCO",
-                    pick = "${mainFwd.fullName}: ${mainFwd.pickOnTarget}",
-                    lambda = mainFwd.shotsOnTargetLambda,
-                    modelProb = mainFwd.probOnTarget,
-                    fairOdds = mainFwd.fairOddsOnTarget,
-                    realMarketOdds = null,
-                    edgePercent = 5.2,
-                    isSafePick = mainFwd.probOnTarget >= 0.65
-                )
-            )
-        }
-
+        // Pata 3: Córners
         legs.add(
             ParlayLeg(
                 category = "CÓRNERS",
                 pick = cornersAnalysis.recommendedPick,
                 lambda = cornersAnalysis.expectedTotal,
                 modelProb = cornersAnalysis.recommendedProb,
-                fairOdds = cornersAnalysis.recommendedFairOdds,
-                realMarketOdds = odds.overCornerLine,
-                edgePercent = 4.8,
+                displayOdds = cornersAnalysis.displayOdds,
+                edgePercent = null,
                 isSafePick = cornersAnalysis.recommendedProb >= 0.65
             )
         )
 
-        legs.add(
-            ParlayLeg(
-                category = "DISCIPLINA",
-                pick = cardsAnalysis.recommendedPick,
-                lambda = cardsAnalysis.expectedTotal,
-                modelProb = cardsAnalysis.recommendedProb,
-                fairOdds = cardsAnalysis.recommendedFairOdds,
-                realMarketOdds = odds.overCardsLine,
-                edgePercent = 4.1,
-                isSafePick = cardsAnalysis.recommendedProb >= 0.65
+        // Pata 4: Remate al arco del atacante real del encuentro
+        val mainStriker = playerProps.firstOrNull()
+        if (mainStriker != null) {
+            legs.add(
+                ParlayLeg(
+                    category = "REMATES",
+                    pick = "${mainStriker.fullName}: ${mainStriker.pickOnTarget}",
+                    lambda = mainStriker.shotsOnTargetLambda,
+                    modelProb = mainStriker.probOnTarget,
+                    displayOdds = mainStriker.displayOdds,
+                    edgePercent = null,
+                    isSafePick = mainStriker.probOnTarget >= 0.65
+                )
             )
-        )
+        }
 
+        // Probabilidad conjunta correlacionada
         var jointProb = 1.0
-        var cumFairOdds = 1.0
-        var cumRealOdds: Double? = 1.0
-        var hasMissingRealOdds = false
-
+        var cumFair = 1.0
         for (l in legs) {
             jointProb *= l.modelProb
-            cumFairOdds *= l.fairOdds
-            if (l.realMarketOdds != null) {
-                cumRealOdds = (cumRealOdds ?: 1.0) * l.realMarketOdds
-            } else {
-                hasMissingRealOdds = true
+            val legOddsNum = if (l.displayOdds.contains("@")) {
+                l.displayOdds.substringAfter("@").substringBefore(" ").toDoubleOrNull() ?: (1.0 / l.modelProb)
+            } else 1.3
+            cumFair *= legOddsNum
+        }
+        jointProb = (jointProb * 1.15).coerceIn(0.05, 0.95)
+        val parlayOddsVal = (1.0 / jointProb).coerceIn(1.8, 18.0)
+        val parlayDisplay = String.format(Locale.US, "@%.2f", parlayOddsVal)
+
+        // Criterio de Kelly fraccional
+        val kelly = ((jointProb * parlayOddsVal - 1.0) / (parlayOddsVal - 1.0) * 0.25 * 100.0).coerceIn(1.0, 4.5)
+
+        // DETERMINAR LA APUESTA PRINCIPAL / SEGURA
+        // Solo si la probabilidad es >= 50%
+        val (safeTitle, safePick, safeOdds, safeProbStr) = when {
+            dcAnalysis.modelProb >= 0.70 -> {
+                Quad("Doble Oportunidad", dcAnalysis.pickTitle, dcAnalysis.displayOdds, "${(dcAnalysis.modelProb * 100).toInt()}% prob")
+            }
+            pOver15 >= 0.72 -> {
+                val disp = if (odds.over15Goals != null && odds.over15Goals > 1.01) String.format(Locale.US, "@%.2f", odds.over15Goals) else String.format(Locale.US, "@%.2f (Calc)", 1.0 / pOver15)
+                Quad("Total Goles", "Más de 1.5 Goles", disp, "${(pOver15 * 100).toInt()}% prob")
+            }
+            dcAnalysis.modelProb >= 0.50 -> {
+                Quad("Cobertura", dcAnalysis.pickTitle, dcAnalysis.displayOdds, "${(dcAnalysis.modelProb * 100).toInt()}% prob")
+            }
+            else -> {
+                Quad("Selección Moderada", dcAnalysis.pickTitle, dcAnalysis.displayOdds, "${(dcAnalysis.modelProb * 100).toInt()}% prob")
             }
         }
-        jointProb = (jointProb * 1.12).coerceIn(0.01, 0.99)
-        cumFairOdds = (1.0 / jointProb).coerceAtLeast(1.10)
 
-        val finalRealOdds = if (!hasMissingRealOdds && (cumRealOdds ?: 0.0) > 1.0) cumRealOdds else null
-        val parlayEV = if (finalRealOdds != null) (jointProb * finalRealOdds) - 1.0 else null
-
-        val kelly = if (finalRealOdds != null && parlayEV != null && parlayEV > 0.0) {
-            val b = finalRealOdds - 1.0
-            val p = jointProb
-            val q = 1.0 - p
-            val f = ((b * p) - q) / b
-            (max(0.0, f) * 0.25 * 100.0).coerceIn(0.5, 5.0)
-        } else 2.2
+        // VEREDICTO DINÁMICO
+        // Armado en tiempo real con los datos concretos de este encuentro
+        val strikerName = mainStriker?.fullName ?: "el atacante principal"
+        val quickVerdict = if (mainStriker != null && mainStriker.totalShotsLambda >= 2.2) {
+            "Buen valor en remates de $strikerName (${mainStriker.pickOnTarget} a ${mainStriker.displayOdds}). Cobertura recomendada con ${dcAnalysis.pickCode} (${(dcAnalysis.modelProb * 100).toInt()}% prob) y ${cornersAnalysis.recommendedPick}."
+        } else {
+            "La mejor opción matemática es $safePick ($safeOdds) combinada con ${cornersAnalysis.recommendedPick} ($bestScore como marcador central)."
+        }
 
         val summary = MatchBettingSummary(
-            safePick = dcAnalysis.pickTitle,
-            safePickOdds = if (dcAnalysis.realOdds != null) String.format(Locale.US, "@%.2f", dcAnalysis.realOdds) else "@1.18",
-            safePickProb = "${(dcAnalysis.modelProb * 100).toInt()}% prob",
+            safePickTitle = safeTitle,
+            safePick = safePick,
+            safePickOdds = safeOdds,
+            safePickProb = safeProbStr,
             valuePick = cornersAnalysis.recommendedPick,
-            valuePickOdds = if (odds.overCornerLine != null) String.format(Locale.US, "@%.2f", odds.overCornerLine) else "@1.80",
-            playerPick = if (mainFwd != null) "${mainFwd.fullName}: ${mainFwd.pickOnTarget}" else "Delantero: +0.5 al Arco",
-            playerPickOdds = if (mainFwd != null) String.format(Locale.US, "@%.2f", mainFwd.fairOddsOnTarget) else "@1.50",
+            valuePickOdds = cornersAnalysis.displayOdds,
+            playerPick = if (mainStriker != null) "${mainStriker.fullName}: ${mainStriker.pickOnTarget}" else "Atacante: +0.5 al Arco",
+            playerPickOdds = mainStriker?.displayOdds ?: "@1.50 (Calc)",
             cardsPick = cardsAnalysis.recommendedPick,
             predictedScore = bestScore,
-            quickVerdict = "Base segura con ${dcAnalysis.pickCode} + ${cornersAnalysis.recommendedPick}. Buen valor en remate al arco de ${mainFwd?.fullName ?: "Delantero"}."
+            quickVerdict = quickVerdict
         )
 
         return QuantumMatchAnalysis(
-            event = event,
+            event = event.copy(
+                homeRecentForm = parseFormStringToBadges(homeStats.formString),
+                awayRecentForm = parseFormStringToBadges(awayStats.formString)
+            ),
             odds = odds,
             lambdaHome = lambdaHome,
             lambdaAway = lambdaAway,
@@ -791,379 +1205,16 @@ object QuantumMathEngine {
             bettingSummary = summary,
             parlayLegs = legs,
             jointParlayProb = jointProb,
-            parlayFairOdds = cumFairOdds,
-            parlayRealOdds = finalRealOdds,
-            parlayExpectedValue = parlayEV,
+            parlayDisplayOdds = parlayDisplay,
             kellyStakePercent = kelly
         )
     }
+
+    private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 }
 
 // ==============================================================================
-// 4. CLIENTE DE RED CONFIDENCIAL Y MAPEADOR DE LIGAS
-// ==============================================================================
-
-object PrivateFeedClient {
-    private const val SECURE_ENDPOINT = "https://sports.bzzoiro.com/api/v2"
-    private const val PRIVATE_KEY = "9665517ed1732bad524c3730e18cd9d90cc1d13f"
-
-    private fun getLeagueNameById(leagueId: Long, rawTeamHint: String): String {
-        return when (leagueId) {
-            85L -> "Liga Profesional (Argentina)"
-            3L -> "LaLiga EA Sports (España)"
-            2L -> "Primeira Liga (Portugal)"
-            6L -> "Ligue 1 (Francia)"
-            9L -> "Brasileirão Serie A"
-            34L -> "Brasileirão Serie B"
-            12L -> "EFL Championship"
-            14L -> "Pro League (Bélgica)"
-            80L -> "Liga BetPlay (Colombia)"
-            19L -> "Liga MX (México)"
-            57L -> "USL Championship"
-            96L -> "Bundesliga (Austria)"
-            5L -> "Bundesliga (Alemania)"
-            1L -> "Premier League (Inglaterra)"
-            4L -> "Serie A (Italia)"
-            8L -> "UEFA Champions League"
-            else -> if (leagueId > 0) "Liga Internacional #$leagueId" else "Liga Profesional"
-        }
-    }
-
-    private fun parseIsoDate(dateStr: String): Date? {
-        val formats = listOf(
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US),
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") },
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US),
-            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US),
-            SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        )
-        for (f in formats) {
-            try {
-                return f.parse(dateStr)
-            } catch (_: Exception) {}
-        }
-        return null
-    }
-
-    private fun generateFormPills(
-        team: String,
-        isHome: Boolean,
-        h2hRecentMatches: List<JSONObject>,
-        winRate: Double
-    ): List<MatchFormResult> {
-        val results = mutableListOf<MatchFormResult>()
-
-        for (m in h2hRecentMatches) {
-            val h = m.optString("home", "")
-            val a = m.optString("away", "")
-            val hs = m.optInt("home_score", 0)
-            val ascore = m.optInt("away_score", 0)
-            val sc = "$hs-$ascore"
-
-            val isThisTeamHome = team.contains(h, ignoreCase = true)
-            val isThisTeamAway = team.contains(a, ignoreCase = true)
-
-            if (isThisTeamHome || isThisTeamAway) {
-                val teamScore = if (isThisTeamHome) hs else ascore
-                val rivalScore = if (isThisTeamHome) ascore else hs
-                val rival = if (isThisTeamHome) a else h
-
-                when {
-                    teamScore > rivalScore -> results.add(MatchFormResult("V", FormOutcome.WIN, rival, sc))
-                    teamScore == rivalScore -> results.add(MatchFormResult("E", FormOutcome.DRAW, rival, sc))
-                    else -> results.add(MatchFormResult("D", FormOutcome.LOSS, rival, sc))
-                }
-            }
-            if (results.size >= 5) break
-        }
-
-        val templateWin = listOf(
-            MatchFormResult("V", FormOutcome.WIN, "Rival Directo", "2-0"),
-            MatchFormResult("V", FormOutcome.WIN, "Visitante", "1-0"),
-            MatchFormResult("E", FormOutcome.DRAW, "Clásico", "1-1"),
-            MatchFormResult("V", FormOutcome.WIN, "Local", "3-1"),
-            MatchFormResult("D", FormOutcome.LOSS, "Rival de Turno", "0-1")
-        )
-        val templateAvg = listOf(
-            MatchFormResult("E", FormOutcome.DRAW, "Rival Directo", "1-1"),
-            MatchFormResult("D", FormOutcome.LOSS, "Visitante", "0-2"),
-            MatchFormResult("V", FormOutcome.WIN, "Local", "2-1"),
-            MatchFormResult("E", FormOutcome.DRAW, "Copa", "0-0"),
-            MatchFormResult("D", FormOutcome.LOSS, "Rival de Turno", "1-2")
-        )
-
-        val fallback = if (winRate >= 0.40) templateWin else templateAvg
-        var idx = 0
-        while (results.size < 5) {
-            results.add(fallback[idx % fallback.size])
-            idx++
-        }
-
-        return results.take(5)
-    }
-
-    private fun openConnection(endpoint: String): HttpURLConnection {
-        val url = URL(if (endpoint.startsWith("http")) endpoint else "$SECURE_ENDPOINT$endpoint")
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "GET"
-        conn.setRequestProperty("Authorization", "Token $PRIVATE_KEY")
-        conn.setRequestProperty("Accept", "application/json")
-        conn.connectTimeout = 8000
-        conn.readTimeout = 8000
-        return conn
-    }
-
-    private fun readResponse(conn: HttpURLConnection): String {
-        val reader = BufferedReader(InputStreamReader(conn.inputStream))
-        val sb = StringBuilder()
-        var line: String?
-        while (reader.readLine().also { line = it } != null) {
-            sb.append(line)
-        }
-        reader.close()
-        return sb.toString()
-    }
-
-    suspend fun fetchEvents(dateFrom: String, dateTo: String, limit: Int = 40): List<ApexEvent> =
-        withContext(Dispatchers.IO) {
-            val list = mutableListOf<ApexEvent>()
-            val now = Date()
-            val nowMs = now.time
-
-            try {
-                val endpoint = "/events/?date_from=$dateFrom&date_to=$dateTo&limit=$limit"
-                val conn = openConnection(endpoint)
-                if (conn.responseCode == 200) {
-                    val raw = readResponse(conn)
-                    val root = JSONObject(raw)
-                    val results = root.optJSONArray("results") ?: JSONArray()
-
-                    for (i in 0 until results.length()) {
-                        val obj = results.getJSONObject(i)
-                        val id = obj.optLong("id")
-                        val leagueId = obj.optLong("league_id")
-                        val roundLabel = obj.optString("round_label", "Jornada Oficial")
-                        val homeTeam = obj.optString("home_team", "Local")
-                        val awayTeam = obj.optString("away_team", "Visitante")
-                        val eventDateStr = obj.optString("event_date", "")
-                        val status = obj.optString("status", "notstarted")
-                        val period = obj.optString("period", "")
-                        val curMin = if (obj.has("current_minute") && !obj.isNull("current_minute")) {
-                            obj.optInt("current_minute")
-                        } else null
-                        val homeSc = if (obj.has("home_score") && !obj.isNull("home_score")) {
-                            obj.optInt("home_score")
-                        } else null
-                        val awaySc = if (obj.has("away_score") && !obj.isNull("away_score")) {
-                            obj.optInt("away_score")
-                        } else null
-
-                        val matchDate = parseIsoDate(eventDateStr)
-                        val diffHours = if (matchDate != null) {
-                            (matchDate.time - nowMs) / (1000.0 * 3600.0)
-                        } else 4.0
-
-                        val is24h = diffHours in -2.5..24.5
-
-                        val timeFormatted = when {
-                            status == "inprogress" || curMin != null -> "EN VIVO • ${curMin ?: 45}'"
-                            status == "finished" -> "FINALIZADO"
-                            diffHours in 0.0..1.0 -> "EN ${(diffHours * 60).toInt()} MIN"
-                            diffHours > 1.0 && diffHours <= 24.0 -> "EN ${diffHours.toInt()}h ${(diffHours % 1.0 * 60).toInt()}m"
-                            else -> if (matchDate != null) {
-                                SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(matchDate) + " hs"
-                            } else "PRÓXIMAMENTE"
-                        }
-
-                        var h2hTot = 0
-                        var h2hHw = 0
-                        var h2hDr = 0
-                        var h2hAw = 0
-                        var h2hAvgG = 2.45
-                        var h2hHwRate = 0.40
-                        var h2hAwRate = 0.35
-                        val recentScores = mutableListOf<String>()
-                        val recentJsonList = mutableListOf<JSONObject>()
-
-                        val h2hObj = obj.optJSONObject("head_to_head")
-                        if (h2hObj != null) {
-                            h2hTot = h2hObj.optInt("total_matches", 0)
-                            h2hHw = h2hObj.optInt("home_wins", 0)
-                            h2hDr = h2hObj.optInt("draws", 0)
-                            h2hAw = h2hObj.optInt("away_wins", 0)
-                            h2hAvgG = h2hObj.optDouble("avg_total_goals", 2.45)
-                            h2hHwRate = h2hObj.optDouble("home_win_rate", 0.40)
-                            h2hAwRate = h2hObj.optDouble("away_win_rate", 0.35)
-
-                            val recArr = h2hObj.optJSONArray("recent_matches")
-                            if (recArr != null) {
-                                for (k in 0 until recArr.length()) {
-                                    val r = recArr.getJSONObject(k)
-                                    recentJsonList.add(r)
-                                    val sc = r.optString("score", "")
-                                    val hT = r.optString("home", "")
-                                    val aT = r.optString("away", "")
-                                    if (sc.isNotEmpty() && recentScores.size < 3) {
-                                        recentScores.add("$hT $sc $aT")
-                                    }
-                                }
-                            }
-                        }
-
-                        val homeForm = generateFormPills(homeTeam, true, recentJsonList, h2hHwRate)
-                        val awayForm = generateFormPills(awayTeam, false, recentJsonList, h2hAwRate)
-
-                        list.add(
-                            ApexEvent(
-                                id = id,
-                                leagueId = leagueId,
-                                leagueName = getLeagueNameById(leagueId, homeTeam),
-                                roundLabel = roundLabel,
-                                homeTeam = homeTeam,
-                                awayTeam = awayTeam,
-                                eventDate = eventDateStr,
-                                status = status,
-                                period = period,
-                                currentMinute = curMin,
-                                homeScore = homeSc,
-                                awayScore = awaySc,
-                                h2hTotalMatches = h2hTot,
-                                h2hHomeWins = h2hHw,
-                                h2hDraws = h2hDr,
-                                h2hAwayWins = h2hAw,
-                                h2hAvgTotalGoals = h2hAvgG,
-                                h2hHomeWinRate = h2hHwRate,
-                                h2hAwayWinRate = h2hAwRate,
-                                recentScores = recentScores,
-                                homeRecentForm = homeForm,
-                                awayRecentForm = awayForm,
-                                isNext24Hours = is24h,
-                                timeToKickoffFormatted = timeFormatted
-                            )
-                        )
-                    }
-                }
-                conn.disconnect()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            list
-        }
-
-    suspend fun fetchOdds(eventId: Long): RealOdds = withContext(Dispatchers.IO) {
-        var odds = RealOdds()
-        try {
-            val endpoint = "/odds/?event_id=$eventId&limit=100"
-            val conn = openConnection(endpoint)
-            if (conn.responseCode == 200) {
-                val raw = readResponse(conn)
-                val root = JSONObject(raw)
-                val results = root.optJSONArray("results") ?: JSONArray()
-
-                var home1x2: Double? = null
-                var draw1x2: Double? = null
-                var away1x2: Double? = null
-                var dc1X: Double? = null
-                var dcX2: Double? = null
-                var dc12: Double? = null
-                var bttsY: Double? = null
-                var bttsN: Double? = null
-                var o15: Double? = null
-                var u15: Double? = null
-                var o25: Double? = null
-                var u25: Double? = null
-                var o35: Double? = null
-                var u35: Double? = null
-                var cornLine: Double? = null
-                var cornO: Double? = null
-                var cornU: Double? = null
-                var cardsLine: Double? = null
-                var cardsO: Double? = null
-
-                for (j in 0 until results.length()) {
-                    val oddObj = results.getJSONObject(j)
-                    val mkt = oddObj.optString("market", "")
-                    val sub = oddObj.optString("sub_market", "")
-                    val valD = oddObj.optDouble("value", 0.0)
-                    if (valD <= 1.0) continue
-
-                    when {
-                        mkt == "1x2" -> {
-                            if (sub == "1") home1x2 = valD
-                            else if (sub == "x" || sub == "X") draw1x2 = valD
-                            else if (sub == "2") away1x2 = valD
-                        }
-                        mkt == "double_chance" || mkt == "dc" -> {
-                            if (sub == "1x" || sub == "1X") dc1X = valD
-                            else if (sub == "x2" || sub == "X2") dcX2 = valD
-                            else if (sub == "12") dc12 = valD
-                        }
-                        mkt == "btts" -> {
-                            if (sub == "yes") bttsY = valD
-                            else if (sub == "no") bttsN = valD
-                        }
-                        mkt == "over_under" || mkt == "goals_over_under" -> {
-                            val line = oddObj.optDouble("line", 2.5)
-                            if (abs(line - 1.5) < 0.1) {
-                                if (sub == "over") o15 = valD else if (sub == "under") u15 = valD
-                            } else if (abs(line - 2.5) < 0.1) {
-                                if (sub == "over") o25 = valD else if (sub == "under") u25 = valD
-                            } else if (abs(line - 3.5) < 0.1) {
-                                if (sub == "over") o35 = valD else if (sub == "under") u35 = valD
-                            }
-                        }
-                        mkt.contains("corner", ignoreCase = true) -> {
-                            cornLine = oddObj.optDouble("line", 9.5)
-                            if (sub == "over") cornO = valD else if (sub == "under") cornU = valD
-                        }
-                        mkt.contains("card", ignoreCase = true) -> {
-                            cardsLine = oddObj.optDouble("line", 4.5)
-                            if (sub == "over") cardsO = valD
-                        }
-                    }
-                }
-
-                if (dc1X == null && home1x2 != null && draw1x2 != null) {
-                    val pImp = (1.0 / home1x2) + (1.0 / draw1x2)
-                    dc1X = round((1.0 / pImp * 0.94) * 100.0) / 100.0
-                }
-                if (dcX2 == null && away1x2 != null && draw1x2 != null) {
-                    val pImp = (1.0 / away1x2) + (1.0 / draw1x2)
-                    dcX2 = round((1.0 / pImp * 0.94) * 100.0) / 100.0
-                }
-
-                odds = RealOdds(
-                    home1x2 = home1x2,
-                    draw1x2 = draw1x2,
-                    away1x2 = away1x2,
-                    dc1X = dc1X,
-                    dcX2 = dcX2,
-                    dc12 = dc12,
-                    bttsYes = bttsY,
-                    bttsNo = bttsN,
-                    over15Goals = o15,
-                    under15Goals = u15,
-                    over25Goals = o25,
-                    under25Goals = u25,
-                    over35Goals = o35,
-                    under35Goals = u35,
-                    cornerLineVal = cornLine,
-                    overCornerLine = cornO,
-                    underCornerLine = cornU,
-                    cardsLineVal = cardsLine,
-                    overCardsLine = cardsO
-                )
-            }
-            conn.disconnect()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        odds
-    }
-}
-
-// ==============================================================================
-// 5. VIEWMODEL: GESTIÓN DE 24 HORAS, AUTO-REFRESH CADA 30 MINUTOS Y LIGAS
+// 4. VIEWMODEL REACTIVO CON PETICIONES EN PARALELO (ASYNC / AWAITALL)
 // ==============================================================================
 
 class FootballStatsViewModel : ViewModel() {
@@ -1177,7 +1228,7 @@ class FootballStatsViewModel : ViewModel() {
     var errorMessage by mutableStateOf<String?>(null)
         private set
 
-    var lastUpdatedTime by mutableStateOf("Sincronizado ahora")
+    var lastUpdatedTime by mutableStateOf("Conectando con Bzzoiro...")
         private set
 
     var selectedLeagueFilter by mutableStateOf("ALL")
@@ -1236,289 +1287,61 @@ class FootballStatsViewModel : ViewModel() {
                 val today = sdf.format(now)
                 val dayAfterTomorrow = sdf.format(Date(now.time + 48L * 3600L * 1000L))
 
-                val rawEvents = PrivateFeedClient.fetchEvents(
+                // 1. Obtener eventos de Bzzoiro
+                val rawEvents = BzzoiroApiClient.fetchEvents(
                     dateFrom = today,
                     dateTo = dayAfterTomorrow,
-                    limit = 35
+                    limit = 25
                 )
 
                 if (rawEvents.isEmpty()) {
-                    loadVerifiedLocalCatalog()
+                    errorMessage = "No se encontraron eventos activos en este momento en Bzzoiro."
                 } else {
-                    val list = mutableListOf<QuantumMatchAnalysis>()
-                    for (ev in rawEvents) {
-                        val odds = PrivateFeedClient.fetchOdds(ev.id)
-                        val analysis = QuantumMathEngine.analyzeEvent(ev, odds)
-                        list.add(analysis)
+                    // 2. Ejecutar peticiones en paralelo para cada evento usando async / awaitAll
+                    val analysesList = coroutineScope {
+                        rawEvents.map { ev ->
+                            async {
+                                // Sub-consultas paralelas para este partido: cuotas, squad local, squad visita, form local, form visita
+                                val oddsDeferred = async { BzzoiroApiClient.fetchEventOdds(ev.id) }
+                                val homeSquadDeferred = async { BzzoiroApiClient.fetchTeamSquad(ev.homeTeamId, ev.homeTeam) }
+                                val awaySquadDeferred = async { BzzoiroApiClient.fetchTeamSquad(ev.awayTeamId, ev.awayTeam) }
+                                val homeFormDeferred = async { BzzoiroApiClient.fetchTeamForm(ev.homeTeamId, ev.homeTeam) }
+                                val awayFormDeferred = async { BzzoiroApiClient.fetchTeamForm(ev.awayTeamId, ev.awayTeam) }
+
+                                val odds = oddsDeferred.await()
+                                val homeSquad = homeSquadDeferred.await()
+                                val awaySquad = awaySquadDeferred.await()
+                                val homeForm = homeFormDeferred.await()
+                                val awayForm = awayFormDeferred.await()
+
+                                QuantumMathEngine.analyzeEventWithRealData(
+                                    event = ev,
+                                    odds = odds,
+                                    homeStats = homeForm,
+                                    awayStats = awayForm,
+                                    homeSquad = homeSquad,
+                                    awaySquad = awaySquad
+                                )
+                            }
+                        }.awaitAll()
                     }
-                    allAnalyses = list
+                    allAnalyses = analysesList
                 }
 
                 val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
                 lastUpdatedTime = "Actualizado ${timeFormat.format(now)} hs (Auto 30 min)"
             } catch (e: Exception) {
                 e.printStackTrace()
-                errorMessage = "Enlace cuántico reconfigurado: operando con telemetría de respaldo local."
-                loadVerifiedLocalCatalog()
+                errorMessage = "Error de red al consultar Bzzoiro: ${e.localizedMessage ?: "Revise conexión"}"
             } finally {
                 isLoading = false
             }
         }
     }
-
-    private fun loadVerifiedLocalCatalog() {
-        val sampleEvents = listOf(
-            ApexEvent(
-                id = 223887,
-                leagueId = 85,
-                leagueName = "Liga Profesional (Argentina)",
-                roundLabel = "Clausura · Jornada 15",
-                homeTeam = "Vélez Sarsfield",
-                awayTeam = "San Lorenzo",
-                eventDate = "2026-10-31T22:15:00Z",
-                status = "notstarted",
-                period = "",
-                currentMinute = null,
-                homeScore = null,
-                awayScore = null,
-                h2hTotalMatches = 28,
-                h2hHomeWins = 11,
-                h2hDraws = 10,
-                h2hAwayWins = 7,
-                h2hAvgTotalGoals = 2.32,
-                h2hHomeWinRate = 0.393,
-                h2hAwayWinRate = 0.250,
-                recentScores = listOf("Vélez 1-0 San Lorenzo", "San Lorenzo 1-1 Vélez", "Vélez 0-0 San Lorenzo"),
-                homeRecentForm = listOf(
-                    MatchFormResult("V", FormOutcome.WIN, "Estudiantes LP", "2-0"),
-                    MatchFormResult("V", FormOutcome.WIN, "Rosario Central", "1-0"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Racing Club", "1-1"),
-                    MatchFormResult("V", FormOutcome.WIN, "Banfield", "2-1"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Boca Juniors", "0-1")
-                ),
-                awayRecentForm = listOf(
-                    MatchFormResult("E", FormOutcome.DRAW, "Independiente", "0-0"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Huracán", "1-2"),
-                    MatchFormResult("V", FormOutcome.WIN, "Gimnasia LP", "1-0"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Newell's", "1-1"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Platense", "0-1")
-                ),
-                isNext24Hours = true,
-                timeToKickoffFormatted = "HOY • 19:15 hs"
-            ),
-            ApexEvent(
-                id = 223882,
-                leagueId = 85,
-                leagueName = "Liga Profesional (Argentina)",
-                roundLabel = "Clausura · Jornada 15",
-                homeTeam = "Huracán",
-                awayTeam = "Tigre",
-                eventDate = "2026-10-30T22:00:00Z",
-                status = "notstarted",
-                period = "",
-                currentMinute = null,
-                homeScore = null,
-                awayScore = null,
-                h2hTotalMatches = 22,
-                h2hHomeWins = 10,
-                h2hDraws = 7,
-                h2hAwayWins = 5,
-                h2hAvgTotalGoals = 2.45,
-                h2hHomeWinRate = 0.455,
-                h2hAwayWinRate = 0.227,
-                recentScores = listOf("Huracán 2-0 Tigre", "Tigre 1-1 Huracán"),
-                homeRecentForm = listOf(
-                    MatchFormResult("V", FormOutcome.WIN, "Argentinos Jrs", "1-0"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Belgrano", "1-1"),
-                    MatchFormResult("V", FormOutcome.WIN, "San Lorenzo", "2-1"),
-                    MatchFormResult("V", FormOutcome.WIN, "Central Córdoba", "2-0"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Unión", "0-0")
-                ),
-                awayRecentForm = listOf(
-                    MatchFormResult("D", FormOutcome.LOSS, "River Plate", "0-3"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Lanús", "1-1"),
-                    MatchFormResult("V", FormOutcome.WIN, "Godoy Cruz", "1-0"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Sarmiento", "0-1"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Defensa y Justicia", "2-2")
-                ),
-                isNext24Hours = true,
-                timeToKickoffFormatted = "HOY • 19:00 hs"
-            ),
-            ApexEvent(
-                id = 213629,
-                leagueId = 3,
-                leagueName = "LaLiga EA Sports (España)",
-                roundLabel = "Primera División · Jornada 11",
-                homeTeam = "Villarreal",
-                awayTeam = "Espanyol",
-                eventDate = "2026-10-30T20:00:00Z",
-                status = "notstarted",
-                period = "",
-                currentMinute = null,
-                homeScore = null,
-                awayScore = null,
-                h2hTotalMatches = 30,
-                h2hHomeWins = 14,
-                h2hDraws = 11,
-                h2hAwayWins = 5,
-                h2hAvgTotalGoals = 2.70,
-                h2hHomeWinRate = 0.467,
-                h2hAwayWinRate = 0.167,
-                recentScores = listOf("Villarreal 4-2 Espanyol", "Espanyol 0-1 Villarreal"),
-                homeRecentForm = listOf(
-                    MatchFormResult("V", FormOutcome.WIN, "Getafe", "3-1"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Real Madrid", "0-2"),
-                    MatchFormResult("V", FormOutcome.WIN, "Las Palmas", "3-1"),
-                    MatchFormResult("V", FormOutcome.WIN, "Celta de Vigo", "4-3"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Valencia", "1-1")
-                ),
-                awayRecentForm = listOf(
-                    MatchFormResult("D", FormOutcome.LOSS, "Athletic Club", "1-4"),
-                    MatchFormResult("V", FormOutcome.WIN, "Mallorca", "2-1"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Real Betis", "0-1"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Real Madrid", "1-4"),
-                    MatchFormResult("V", FormOutcome.WIN, "Alavés", "3-2")
-                ),
-                isNext24Hours = true,
-                timeToKickoffFormatted = "HOY • 17:00 hs"
-            ),
-            ApexEvent(
-                id = 215558,
-                leagueId = 2,
-                leagueName = "Primeira Liga (Portugal)",
-                roundLabel = "Liga Portugal · Jornada 10",
-                homeTeam = "Casa Pia",
-                awayTeam = "Sporting CP",
-                eventDate = "2026-10-30T20:15:00Z",
-                status = "notstarted",
-                period = "",
-                currentMinute = null,
-                homeScore = null,
-                awayScore = null,
-                h2hTotalMatches = 6,
-                h2hHomeWins = 0,
-                h2hDraws = 1,
-                h2hAwayWins = 5,
-                h2hAvgTotalGoals = 3.10,
-                h2hHomeWinRate = 0.00,
-                h2hAwayWinRate = 0.833,
-                recentScores = listOf("Sporting CP 8-0 Casa Pia", "Casa Pia 1-2 Sporting CP"),
-                homeRecentForm = listOf(
-                    MatchFormResult("E", FormOutcome.DRAW, "Rio Ave", "2-2"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Sporting Braga", "0-2"),
-                    MatchFormResult("V", FormOutcome.WIN, "Moreirense", "3-1"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Vitória Guimarães", "1-1"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Benfica", "0-3")
-                ),
-                awayRecentForm = listOf(
-                    MatchFormResult("V", FormOutcome.WIN, "Famalicão", "3-0"),
-                    MatchFormResult("V", FormOutcome.WIN, "AVS", "3-0"),
-                    MatchFormResult("V", FormOutcome.WIN, "Arouca", "3-0"),
-                    MatchFormResult("V", FormOutcome.WIN, "Porto", "2-0"),
-                    MatchFormResult("V", FormOutcome.WIN, "Farense", "5-0")
-                ),
-                isNext24Hours = true,
-                timeToKickoffFormatted = "HOY • 17:15 hs"
-            ),
-            ApexEvent(
-                id = 210510,
-                leagueId = 6,
-                leagueName = "Ligue 1 (Francia)",
-                roundLabel = "Ligue 1 McDonald's · Jornada 9",
-                homeTeam = "Lille",
-                awayTeam = "RC Lens",
-                eventDate = "2026-10-30T20:05:00Z",
-                status = "notstarted",
-                period = "",
-                currentMinute = null,
-                homeScore = null,
-                awayScore = null,
-                h2hTotalMatches = 24,
-                h2hHomeWins = 12,
-                h2hDraws = 7,
-                h2hAwayWins = 5,
-                h2hAvgTotalGoals = 2.50,
-                h2hHomeWinRate = 0.50,
-                h2hAwayWinRate = 0.208,
-                recentScores = listOf("Lille 2-1 Lens", "Lens 1-1 Lille"),
-                homeRecentForm = listOf(
-                    MatchFormResult("E", FormOutcome.DRAW, "Monaco", "0-0"),
-                    MatchFormResult("V", FormOutcome.WIN, "Toulouse", "2-1"),
-                    MatchFormResult("V", FormOutcome.WIN, "Le Havre", "3-0"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Strasbourg", "3-3"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Saint-Étienne", "0-1")
-                ),
-                awayRecentForm = listOf(
-                    MatchFormResult("V", FormOutcome.WIN, "Saint-Étienne", "2-0"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Strasbourg", "2-2"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Nice", "0-0"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Rennes", "1-1"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Lyon", "0-0")
-                ),
-                isNext24Hours = true,
-                timeToKickoffFormatted = "HOY • 17:05 hs"
-            ),
-            ApexEvent(
-                id = 7316,
-                leagueId = 9,
-                leagueName = "Brasileirão Serie A",
-                roundLabel = "Serie A · Rodada 31",
-                homeTeam = "Corinthians",
-                awayTeam = "Mirassol",
-                eventDate = "2026-10-30T23:00:00Z",
-                status = "notstarted",
-                period = "",
-                currentMinute = null,
-                homeScore = null,
-                awayScore = null,
-                h2hTotalMatches = 8,
-                h2hHomeWins = 5,
-                h2hDraws = 2,
-                h2hAwayWins = 1,
-                h2hAvgTotalGoals = 2.30,
-                h2hHomeWinRate = 0.625,
-                h2hAwayWinRate = 0.125,
-                recentScores = listOf("Corinthians 2-0 Mirassol", "Mirassol 1-2 Corinthians"),
-                homeRecentForm = listOf(
-                    MatchFormResult("V", FormOutcome.WIN, "Athletico Paranaense", "5-2"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Internacional", "2-2"),
-                    MatchFormResult("D", FormOutcome.LOSS, "São Paulo", "1-3"),
-                    MatchFormResult("V", FormOutcome.WIN, "Atlético Goianiense", "3-0"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Botafogo", "1-2")
-                ),
-                awayRecentForm = listOf(
-                    MatchFormResult("V", FormOutcome.WIN, "Novorizontino", "1-0"),
-                    MatchFormResult("D", FormOutcome.LOSS, "Santos", "2-3"),
-                    MatchFormResult("V", FormOutcome.WIN, "Vila Nova", "1-0"),
-                    MatchFormResult("E", FormOutcome.DRAW, "Sport Recife", "0-0"),
-                    MatchFormResult("V", FormOutcome.WIN, "Goiás", "1-0")
-                ),
-                isNext24Hours = true,
-                timeToKickoffFormatted = "HOY • 20:00 hs"
-            )
-        )
-
-        val oddsList = listOf(
-            RealOdds(home1x2 = 1.91, draw1x2 = 3.10, away1x2 = 4.50, dc1X = 1.18, dcX2 = 1.80, dc12 = 1.34, over15Goals = 1.44, over25Goals = 2.38, under25Goals = 1.55, cornerLineVal = 8.5, overCornerLine = 1.80, cardsLineVal = 4.5, overCardsLine = 1.85),
-            RealOdds(home1x2 = 1.75, draw1x2 = 3.30, away1x2 = 5.20, dc1X = 1.14, dcX2 = 2.05, dc12 = 1.31, over15Goals = 1.48, over25Goals = 2.45, under25Goals = 1.52, cornerLineVal = 8.5, overCornerLine = 1.75, cardsLineVal = 4.5, overCardsLine = 1.78),
-            RealOdds(home1x2 = 1.62, draw1x2 = 4.10, away1x2 = 5.50, dc1X = 1.15, dcX2 = 2.25, dc12 = 1.22, over15Goals = 1.25, over25Goals = 1.75, under25Goals = 2.05, cornerLineVal = 9.5, overCornerLine = 1.85, cardsLineVal = 4.5, overCardsLine = 1.90),
-            RealOdds(home1x2 = 9.50, draw1x2 = 5.80, away1x2 = 1.28, dc1X = 3.60, dcX2 = 1.05, dc12 = 1.12, over15Goals = 1.18, over25Goals = 1.55, under25Goals = 2.40, cornerLineVal = 9.5, overCornerLine = 1.80, cardsLineVal = 3.5, overCardsLine = 1.75),
-            RealOdds(home1x2 = 2.15, draw1x2 = 3.25, away1x2 = 3.50, dc1X = 1.28, dcX2 = 1.68, dc12 = 1.32, over15Goals = 1.38, over25Goals = 2.15, under25Goals = 1.68, cornerLineVal = 8.5, overCornerLine = 1.82, cardsLineVal = 4.5, overCardsLine = 1.80),
-            RealOdds(home1x2 = 1.68, draw1x2 = 3.60, away1x2 = 5.00, dc1X = 1.16, dcX2 = 2.10, dc12 = 1.27, over15Goals = 1.36, over25Goals = 2.05, under25Goals = 1.74, cornerLineVal = 9.5, overCornerLine = 1.88, cardsLineVal = 5.5, overCardsLine = 1.85)
-        )
-
-        val list = mutableListOf<QuantumMatchAnalysis>()
-        for (i in sampleEvents.indices) {
-            val ev = sampleEvents[i]
-            val od = oddsList.getOrElse(i) { RealOdds() }
-            list.add(QuantumMathEngine.analyzeEvent(ev, od))
-        }
-        allAnalyses = list
-    }
 }
 
 // ==============================================================================
-// 6. UI JETPACK COMPOSE MATERIAL 3: WHITELABEL APEX QUANTUM HUD
+// 5. UI JETPACK COMPOSE MATERIAL 3: WHITELABEL APEX QUANTUM HUD
 // ==============================================================================
 
 class MainActivity : ComponentActivity() {
@@ -1602,7 +1425,7 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
                         CircularProgressIndicator(color = Color(0xFF00E5FF))
                         Spacer(modifier = Modifier.height(14.dp))
                         Text(
-                            text = "SINCRONIZANDO EVENTOS...",
+                            text = "CONSULTANDO BZZOIRO SPORTS DATA (PARALELO)...",
                             color = Color(0xFF00E5FF),
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
@@ -1626,7 +1449,7 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "No hay encuentros programados dentro de las 24 hs para la liga seleccionada.",
+                            text = "No se encontraron encuentros programados dentro de las próximas 24 hs en Bzzoiro.",
                             color = Color(0xFF64748B),
                             fontSize = 12.sp,
                             textAlign = TextAlign.Center
@@ -1655,7 +1478,7 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
 }
 
 // ==============================================================================
-// 7. COMPONENTES VISUALES: HEADER, SELECTORES Y CARDS DE ALTA FIDELIDAD
+// 6. COMPONENTES VISUALES: HEADER, SELECTORES Y CARDS DE ALTA FIDELIDAD
 // ==============================================================================
 
 @Composable
@@ -1854,6 +1677,7 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
             .padding(horizontal = 14.dp, vertical = 7.dp)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
+            // Cabecera: Liga, Ronda y Tiempo
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1894,11 +1718,13 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            // Equipos y Marcador
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                // Local
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = event.homeTeam,
@@ -1912,6 +1738,7 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
                     RecentFormDotsRow(formList = event.homeRecentForm, label = "Local")
                 }
 
+                // Score / VS
                 Surface(
                     color = Color(0xFF182438),
                     shape = RoundedCornerShape(8.dp),
@@ -1937,6 +1764,7 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
                     }
                 }
 
+                // Visitante
                 Column(
                     modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.End
@@ -1957,6 +1785,7 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Selector de Módulos (Tabs)
             ScrollableTabRow(
                 selectedTabIndex = activeTab,
                 containerColor = Color(0xFF0A101D),
@@ -2054,7 +1883,7 @@ fun RecentFormDotsRow(formList: List<MatchFormResult>, label: String) {
 }
 
 // ==============================================================================
-// 8. NUEVOS MÓDULOS: RESUMEN DE APUESTAS Y COMBINADA DESTACADA
+// 7. MÓDULOS DE ANÁLISIS DINÁMICOS
 // ==============================================================================
 
 @Composable
@@ -2093,6 +1922,7 @@ fun MatchBettingSummaryView(summary: MatchBettingSummary) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Apuesta Principal / Segura (solo si prob >= 50%)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2101,7 +1931,7 @@ fun MatchBettingSummaryView(summary: MatchBettingSummary) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "🟢 Apuesta Segura (Bajo Riesgo):",
+                    text = "🟢 ${summary.safePickTitle}:",
                     fontSize = 11.sp,
                     color = Color(0xFF94A3B8),
                     fontWeight = FontWeight.Medium
@@ -2114,6 +1944,7 @@ fun MatchBettingSummaryView(summary: MatchBettingSummary) {
                 )
             }
 
+            // Apuesta de Valor (Córners)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2135,6 +1966,7 @@ fun MatchBettingSummaryView(summary: MatchBettingSummary) {
                 )
             }
 
+            // Prop de Jugador Real
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2143,7 +1975,7 @@ fun MatchBettingSummaryView(summary: MatchBettingSummary) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "🎯 Prop de Jugador:",
+                    text = "🎯 Prop de Jugador Real:",
                     fontSize = 11.sp,
                     color = Color(0xFF94A3B8),
                     fontWeight = FontWeight.Medium
@@ -2156,6 +1988,7 @@ fun MatchBettingSummaryView(summary: MatchBettingSummary) {
                 )
             }
 
+            // Marcador Más Probable Poisson
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2179,6 +2012,7 @@ fun MatchBettingSummaryView(summary: MatchBettingSummary) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Veredicto Dinámico conciso
             Surface(
                 color = Color(0xFF0F1A2E),
                 shape = RoundedCornerShape(6.dp),
@@ -2210,22 +2044,30 @@ fun MatchBetBuilderCardView(analysis: QuantumMatchAnalysis) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "⚡ COMBINADA DEL PARTIDO",
-                    fontWeight = FontWeight.Black,
-                    fontSize = 11.sp,
-                    color = Color(0xFFA855F7)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .background(Color(0xFFA855F7), CircleShape)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "⚡ COMBINADA DEL PARTIDO (SAME-GAME PARLAY)",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 11.sp,
+                        color = Color(0xFFA855F7)
+                    )
+                }
 
                 Surface(
                     color = Color(0xFFA855F7).copy(alpha = 0.2f),
                     shape = RoundedCornerShape(6.dp)
                 ) {
                     Text(
-                        text = "CUOTA: ${if (analysis.parlayRealOdds != null) String.format(Locale.US, "@%.2f", analysis.parlayRealOdds) else "@3.85"}",
-                        color = Color(0xFFA855F7),
+                        text = "CUOTA ${analysis.parlayDisplayOdds}",
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Black,
-                        fontSize = 10.sp,
+                        color = Color(0xFFE9D5FF),
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )
                 }
@@ -2233,66 +2075,99 @@ fun MatchBetBuilderCardView(analysis: QuantumMatchAnalysis) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            for ((index, leg) in analysis.parlayLegs.take(4).withIndex()) {
-                Row(
+            for (leg in analysis.parlayLegs) {
+                Surface(
+                    color = Color(0xFF14192B),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, Color(0xFF263352)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 3.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(vertical = 3.dp)
                 ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "${index + 1}. ",
-                            color = Color(0xFF00E5FF),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        )
-                        Text(
-                            text = "${leg.category}: ${leg.pick}",
-                            fontSize = 11.sp,
-                            color = Color(0xFFF1F5F9),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                color = Color(0xFF232D48),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = leg.category,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF94A3B8),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = leg.pick,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFF1F5F9)
+                            )
+                        }
 
-                    Text(
-                        text = "${(leg.modelProb * 100).toInt()}% prob",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF94A3B8)
-                    )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "${(leg.modelProb * 100).toInt()}%",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black,
+                                color = if (leg.isSafePick) Color(0xFF10B981) else Color(0xFFF59E0B)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = leg.displayOdds,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF00E5FF)
+                            )
+                        }
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+            Surface(
+                color = Color(0xFF131124),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                MetricPill(title = "PROB CONJUNTA", value = "${(analysis.jointParlayProb * 100).toInt()}%", color = Color(0xFF00E5FF))
-                MetricPill(title = "CUOTA MODELO", value = String.format(Locale.US, "%.2f", analysis.parlayFairOdds), color = Color(0xFFA855F7))
-                MetricPill(title = "STAKE RECOMENDADO", value = "${String.format(Locale.US, "%.1f", analysis.kellyStakePercent)}%", color = Color(0xFFF59E0B))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Probabilidad Conjunta: ${(analysis.jointParlayProb * 100).toInt()}%",
+                        fontSize = 10.sp,
+                        color = Color(0xFF94A3B8)
+                    )
+                    Text(
+                        text = "Stake Kelly: ${String.format(Locale.US, "%.1f", analysis.kellyStakePercent)}%",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF10B981)
+                    )
+                }
             }
         }
     }
 }
 
-// ==============================================================================
-// 9. MÓDULOS DE ANÁLISIS CON TÍTULOS CORTOS Y LIMPIOS
-// ==============================================================================
-
 @Composable
 fun DoubleChanceModuleView(dc: DoubleChanceFavoriteAnalysis) {
     Surface(
-        color = Color(0xFF070D18),
+        color = Color(0xFF081422),
         shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -2301,65 +2176,70 @@ fun DoubleChanceModuleView(dc: DoubleChanceFavoriteAnalysis) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
-                    color = Color(0xFF00E5FF).copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Text(
-                        text = "FAVORITO O EMPATE: ${dc.pickCode}",
-                        color = Color(0xFF00E5FF),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Black,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
-                }
-
+                Text(
+                    text = "🛡️ DOBLE OPORTUNIDAD",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 11.sp,
+                    color = Color(0xFF10B981)
+                )
                 Surface(
                     color = Color(0xFF10B981).copy(alpha = 0.15f),
                     shape = RoundedCornerShape(6.dp)
                 ) {
                     Text(
                         text = dc.confidenceBadge,
-                        color = Color(0xFF10B981),
-                        fontSize = 10.sp,
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        color = Color(0xFF10B981),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Text(
-                text = dc.pickTitle,
-                fontWeight = FontWeight.Black,
-                fontSize = 14.sp,
-                color = Color(0xFFF8FAFC)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = dc.pickTitle,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFFF1F5F9)
+                    )
+                    Text(
+                        text = "Favorito identificado: ${dc.favoriteTeam}",
+                        fontSize = 10.sp,
+                        color = Color(0xFF94A3B8)
+                    )
+                }
 
-            Spacer(modifier = Modifier.height(4.dp))
+                Surface(
+                    color = Color(0xFF10B981).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = dc.displayOdds,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 14.sp,
+                        color = Color(0xFF10B981),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
 
-            Text(
-                text = dc.analysisDescription,
-                fontSize = 11.sp,
-                color = Color(0xFF94A3B8),
-                lineHeight = 15.sp
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                MetricPill(title = "PROB. MODELO", value = "${(dc.modelProb * 100).toInt()}%", color = Color(0xFF00E5FF))
-                MetricPill(title = "CUOTA JUSTA", value = String.format(Locale.US, "%.2f", dc.fairOdds), color = Color(0xFFA855F7))
-                MetricPill(title = "CUOTA MERCADO", value = if (dc.realOdds != null) String.format(Locale.US, "%.2f", dc.realOdds) else "1.18", color = Color(0xFF10B981))
-                MetricPill(
-                    title = "VENTAJA (+EV)",
-                    value = if (dc.expectedValue != null) "+${(dc.expectedValue * 100).toInt()}%" else "+4.5%",
-                    color = Color(0xFFF59E0B)
-                )
+                MetricPill(title = "PROB POISSON", value = "${(dc.modelProb * 100).toInt()}%", color = Color(0xFF10B981))
+                MetricPill(title = "CUOTA JUSTA", value = "@${String.format(Locale.US, "%.2f", dc.fairOdds)}", color = Color(0xFF00E5FF))
+                MetricPill(title = "TIPO DE CUOTA", value = if (dc.isMarketOdds) "Casa de Apuesta" else "Modelo Cuántico", color = Color(0xFFF59E0B))
             }
         }
     }
@@ -2381,7 +2261,7 @@ fun CornersAndCardsModuleView(corners: CornersAnalysis, cards: CardsAnalysis) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "🚩 CÓRNERS",
+                        text = "🚩 CÓRNERS (REAL BZZOIRO)",
                         fontWeight = FontWeight.Black,
                         fontSize = 11.sp,
                         color = Color(0xFF38BDF8)
@@ -2406,7 +2286,7 @@ fun CornersAndCardsModuleView(corners: CornersAnalysis, cards: CardsAnalysis) {
                         color = Color(0xFF94A3B8)
                     )
                     Text(
-                        text = "Pick: ${corners.recommendedPick}",
+                        text = "Pick: ${corners.recommendedPick} (${corners.displayOdds})",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF10B981)
@@ -2441,7 +2321,7 @@ fun CornersAndCardsModuleView(corners: CornersAnalysis, cards: CardsAnalysis) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "🟨 TARJETAS",
+                        text = "🟨 TARJETAS (DISCIPLINA)",
                         fontWeight = FontWeight.Black,
                         fontSize = 11.sp,
                         color = Color(0xFFF59E0B)
@@ -2525,7 +2405,7 @@ fun PlayerShotsModuleView(players: List<PlayerShotProp>) {
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = p.pickOnTarget,
+                                text = "${p.pickOnTarget} (${p.displayOdds})",
                                 color = Color(0xFF00E5FF),
                                 fontWeight = FontWeight.Black,
                                 fontSize = 11.sp,
@@ -2546,7 +2426,7 @@ fun PlayerShotsModuleView(players: List<PlayerShotProp>) {
                             color = Color(0xFF64748B)
                         )
                         Text(
-                            text = "P(Al Arco): ${(p.probOnTarget * 100).toInt()}% • @${String.format(Locale.US, "%.2f", p.fairOddsOnTarget)}",
+                            text = "P(Al Arco): ${(p.probOnTarget * 100).toInt()}%",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF10B981)

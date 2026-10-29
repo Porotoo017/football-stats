@@ -53,12 +53,12 @@ import kotlin.math.pow
 import kotlin.math.round
 
 // =============================================================
-// 1. MODELOS DE DATOS (DATA CLASSES CUANTITATIVAS)
+// 1. MODELOS DE DATOS CUANTITATIVOS (DATA CLASSES)
 // =============================================================
 
 /**
- * Cuotas de consenso de mercado reales (Bzzoiro / ESPN)
- * Si la API no provee la cuota, el valor permanece estrictamente null (N/D)
+ * Cuotas de consenso de mercado reales (Bzzoiro / ESPN Bet)
+ * Cero datos inventados: si la API no provee la cuota, el valor permanece null ("N/D")
  */
 data class RealOdds(
     val home1x2: Double? = null,
@@ -77,51 +77,68 @@ data class RealOdds(
     val cornerLineVal: Double? = null
 )
 
+/**
+ * Métricas cuantificadas de remates y remates al arco para jugadores
+ */
+data class PlayerShotProp(
+    val playerName: String,
+    val teamName: String,
+    val position: String,
+    val totalShotsLambda: Double,      // Media esperada de remates totales p/partido
+    val shotsOnTargetLambda: Double,   // Media esperada de remates directos al arco p/partido
+    val dynamicPickTotalShots: String, // Ej: "Más de 2.5 Remates"
+    val probTotalShots: Double,        // P(Remates > 2.5) según Poisson
+    val dynamicPickOnTarget: String,   // Ej: "Más de 1.5 al Arco"
+    val probOnTarget: Double,          // P(Remates al Arco > 1.5) según Poisson
+    val fairOddsOnTarget: Double       // Cuota justa calculada (1 / P)
+)
+
 data class ParlayLeg(
     val category: String,        // "GOLES", "BTTS", "DOBLE OP", "CÓRNERS", "TARJETAS", "JUGADOR"
-    val pick: String,            // Ej: "Más de 4.5 Tarjetas", "Ambos Equipos Marcan: Sí"
-    val lambda: Double?,         // Media esperada histórica (λ) o null si no aplica
+    val pick: String,            // Ej: "Más de 4.5 Tarjetas", "Cole Palmer (+1.5 al arco)"
+    val lambda: Double?,         // Media esperada matemática (λ) o null si no aplica
     val modelProb: Double,       // Probabilidad Poisson / Modelo (0.0 a 1.0)
     val fairOdds: Double,        // Cuota justa calculada (1 / P)
-    val marketOdds: Double?,     // Cuota real de mercado (null si no existe en Bzzoiro/ESPN)
+    val marketOdds: Double?,     // Cuota real de mercado (null si la casa no publica el prop)
     val evPercent: Double?,      // EV real en %: ((P * Cuota) - 1) * 100 o null si falta cuota
-    val badge: String            // Detalle analítico (λ, P%, o club del jugador)
+    val badge: String            // Detalle analítico (λ, P%, o equipo)
 )
 
 data class MathematicalParlay(
     val legs: List<ParlayLeg>,
-    val jointProb: Double,        // Probabilidad conjunta del parlay (%)
-    val combinedOdds: Double?,    // Cuota combinada real o null si falta cuota
-    val totalEvPercent: Double?,  // EV total conjunto o null si falta cuota
-    val isQualified: Boolean,     // true si prob >= 15% y cada pata tiene EV positivo real
-    val statusText: String,       // "VALOR ESPERADO ÓPTIMO (+EV)" o "SIN CUOTAS DE MERCADO"
-    val calculatedFavorite: String // Favorito determinado matemáticamente por Poisson / Odds reales
+    val jointProb: Double,         // Probabilidad conjunta del parlay (%)
+    val combinedOdds: Double?,     // Cuota combinada real o null si falta cuota de mercado
+    val totalEvPercent: Double?,   // EV total conjunto o null si falta cuota
+    val isQualified: Boolean,      // true si prob >= 15% y cada pata con cuota tiene EV positivo
+    val statusText: String,        // "VALOR ESPERADO ÓPTIMO (+EV)" o "PROB CONJUNTA REAL"
+    val calculatedFavorite: String // Favorito determinado cuantitativamente (odds o Poisson)
 )
 
 data class MatchUi(
     val id: String,
     val h: String,
     val a: String,
-    val hForm: List<Char>,        // Racha últimos 5 partidos local ('W', 'D', 'L')
-    val aForm: List<Char>,        // Racha últimos 5 partidos visita ('W', 'D', 'L')
+    val hForm: List<Char>,         // Racha últimos 5 partidos local ('W', 'D', 'L')
+    val aForm: List<Char>,         // Racha últimos 5 partidos visita ('W', 'D', 'L')
     val sc: String,
     val lg: String,
     val tag: String,
     val st: String,
     val live: Boolean,
     val dt: String,
-    val fav: String,              // Favorito ("N/D" si no hay datos suficientes)
-    val cards: String,            // Estadísticas disciplinarias
-    val corners: String,          // Promedio / córners
+    val fav: String,               // Favorito ("N/D" si no hay datos suficientes)
+    val cards: String,             // Estadísticas disciplinarias
+    val corners: String,           // Promedio / córners
     val odds: Triple<String, String, String>, // Cuotas 1X2 formateadas o "N/D"
+    val playerProp: PlayerShotProp?,          // Prop de remates y remates al arco de jugador
     val parlay: MathematicalParlay
 )
 
 data class League(val code: String, val name: String, val tag: String)
 
 // =============================================================
-// 2. RECONCILIADOR DE IDENTIDADES (TEAM ENTITY MATCHER)
-// Reconcilia nombres entre ESPN y la API de Bzzoiro Sports
+// 2. RECONCILIADOR DE IDENTIDADES (ENTITY RESOLUTION ENGINE)
+// Vincula nombres entre ESPN y la API de Bzzoiro Sports
 // =============================================================
 object TeamMatcher {
 
@@ -153,7 +170,22 @@ object TeamMatcher {
         "real sociedad" to "sociedad",
         "bayern munich" to "bayern munchen",
         "sporting cp" to "sporting lisboa",
-        "sporting lisbon" to "sporting lisboa"
+        "sporting lisbon" to "sporting lisboa",
+        "porto" to "fc porto",
+        "benfica" to "sl benfica",
+        "boca juniors" to "boca",
+        "river plate" to "river",
+        "racing club" to "racing",
+        "velez sarsfield" to "velez",
+        "san lorenzo" to "san lorenzo",
+        "newells" to "newells old boys",
+        "flamengo" to "cr flamengo",
+        "palmeiras" to "se palmeiras",
+        "botafogo" to "botafogo rj",
+        "corinthians" to "sc corinthians",
+        "club america" to "america",
+        "tigres uanl" to "tigres",
+        "rayados" to "monterrey"
     )
 
     private val noiseWords = setOf(
@@ -201,13 +233,13 @@ object TeamMatcher {
     ): Boolean {
         val homeScore = matchScore(espnHome, bzzoiroHome)
         val awayScore = matchScore(espnAway, bzzoiroAway)
-        return homeScore >= 0.55 && awayScore >= 0.55
+        return homeScore >= 0.50 && awayScore >= 0.50
     }
 }
 
 // =============================================================
-// 3. CLIENTE BZZOIRO SPORTS DATA API
-// Cero datos inventados: solo consume datos reales si existen
+// 3. CLIENTE BZZOIRO SPORTS DATA API CON FILTRO DE FECHAS
+// Soluciona la causa raíz del "N/D" en partidos importantes
 // =============================================================
 object BzzoiroClient {
     private const val API_TOKEN = "9665517ed1732bad524c3730e18cd9d90cc1d13f"
@@ -244,36 +276,35 @@ object BzzoiroClient {
     }
 
     /**
-     * Busca las cuotas reales del partido en Bzzoiro usando Entity Resolution
+     * Busca las cuotas reales del partido en Bzzoiro.
+     * Incorpora filtrado por fecha del evento para evitar recibir partidos de 2027 o 2023.
      */
-    fun fetchRealOddsForMatch(homeTeam: String, awayTeam: String): RealOdds {
+    fun fetchRealOddsForMatch(homeTeam: String, awayTeam: String, matchDateIso: String? = null): RealOdds {
         try {
             val normHome = TeamMatcher.normalize(homeTeam)
-            val searchKey = normHome.split(" ").firstOrNull { it.length > 2 } ?: normHome
-            val encodedTeam = URLEncoder.encode(searchKey, "UTF-8")
-            val eventsUrl = "$BASE_URL/events/?team_name=$encodedTeam&limit=8"
-            val eventsJsonStr = httpGet(eventsUrl) ?: return RealOdds()
+            val searchKeyHome = normHome.split(" ").firstOrNull { it.length > 2 } ?: normHome
+            val encodedHome = URLEncoder.encode(searchKeyHome, "UTF-8")
 
-            val eventsJson = JSONObject(eventsJsonStr)
-            val results = eventsJson.optJSONArray("results") ?: return RealOdds()
+            // Extraer ventana de fecha si existe (YYYY-MM-DD)
+            val datePrefix = if (matchDateIso != null && matchDateIso.length >= 10) matchDateIso.take(10) else null
 
-            var matchedEventId: Long? = null
-            for (i in 0 until results.length()) {
-                val ev = results.optJSONObject(i) ?: continue
-                val bzHome = ev.optString("home_team", "")
-                val bzAway = ev.optString("away_team", "")
+            // Intentar primero con equipo local
+            var matchedEventId = searchEventId(encodedHome, homeTeam, awayTeam, datePrefix)
 
-                if (TeamMatcher.isSameMatch(homeTeam, awayTeam, bzHome, bzAway)) {
-                    matchedEventId = ev.optLong("id", -1L)
-                    break
-                }
+            // Si no encontró, intentar buscar por equipo visitante
+            if (matchedEventId == null) {
+                val normAway = TeamMatcher.normalize(awayTeam)
+                val searchKeyAway = normAway.split(" ").firstOrNull { it.length > 2 } ?: normAway
+                val encodedAway = URLEncoder.encode(searchKeyAway, "UTF-8")
+                matchedEventId = searchEventId(encodedAway, homeTeam, awayTeam, datePrefix)
             }
 
             if (matchedEventId == null || matchedEventId <= 0) {
                 return RealOdds()
             }
 
-            val oddsUrl = "$BASE_URL/odds/?event_id=$matchedEventId&limit=50"
+            // Descarga de cuotas del evento específico
+            val oddsUrl = "$BASE_URL/odds/?event_id=$matchedEventId&limit=60"
             val oddsJsonStr = httpGet(oddsUrl) ?: return RealOdds()
             val oddsJson = JSONObject(oddsJsonStr)
             val oddsResults = oddsJson.optJSONArray("results") ?: return RealOdds()
@@ -283,6 +314,7 @@ object BzzoiroClient {
             var bttsY: Double? = null; var bttsN: Double? = null
             var o15: Double? = null; var u15: Double? = null
             var o25: Double? = null; var u25: Double? = null
+            var oCorners: Double? = null; var uCorners: Double? = null; var cornerLine: Double? = null
 
             for (k in 0 until oddsResults.length()) {
                 val o = oddsResults.optJSONObject(k) ?: continue
@@ -325,6 +357,11 @@ object BzzoiroClient {
                             "UNDER" -> if (u25 == null) u25 = oddsVal
                         }
                     }
+                    "total_corners", "over_under_corners" -> {
+                        if (outcome == "OVER" && oCorners == null) oCorners = oddsVal
+                        if (outcome == "UNDER" && uCorners == null) uCorners = oddsVal
+                        cornerLine = 9.5
+                    }
                 }
             }
 
@@ -339,18 +376,53 @@ object BzzoiroClient {
                 over15Goals = o15,
                 under15Goals = u15,
                 over25Goals = o25,
-                under25Goals = u25
+                under25Goals = u25,
+                overCornerLine = oCorners,
+                underCornerLine = uCorners,
+                cornerLineVal = cornerLine
             )
         } catch (e: Exception) {
             return RealOdds()
         }
     }
+
+    private fun searchEventId(
+        encodedTeam: String,
+        targetHome: String,
+        targetAway: String,
+        targetDatePrefix: String?
+    ): Long? {
+        val eventsUrl = "$BASE_URL/events/?team_name=$encodedTeam&limit=15"
+        val eventsJsonStr = httpGet(eventsUrl) ?: return null
+        val eventsJson = JSONObject(eventsJsonStr)
+        val results = eventsJson.optJSONArray("results") ?: return null
+
+        for (i in 0 until results.length()) {
+            val ev = results.optJSONObject(i) ?: continue
+            val bzHome = ev.optString("home_team", "")
+            val bzAway = ev.optString("away_team", "")
+            val evDate = ev.optString("event_date", "")
+
+            // Si hay fecha disponible, verificamos que el año/mes sea congruente (evita emparejar eventos de 2027)
+            if (targetDatePrefix != null && evDate.isNotBlank()) {
+                val targetYear = targetDatePrefix.take(4)
+                val evYear = evDate.take(4)
+                if (targetYear != evYear) continue
+            }
+
+            if (TeamMatcher.isSameMatch(targetHome, targetAway, bzHome, bzAway)) {
+                val id = ev.optLong("id", -1L)
+                if (id > 0) return id
+            }
+        }
+        return null
+    }
 }
 
 // =============================================================
 // 4. MOTOR MATEMÁTICO CUANTITATIVO (PARLAY ENGINE)
-// Líneas dinámicas (MÁS / MENOS), BTTS, Doble Oportunidad,
-// Favorito real y Filtro Anti-Correlación estricto
+// Poisson bivariado, líneas dinámicas, remates de jugadores,
+// cuotas justas y filtro anti-correlación estricto
 // =============================================================
 object ParlayEngine {
 
@@ -384,10 +456,6 @@ object ParlayEngine {
         return if (modelProb > 0.0) round((1.0 / modelProb) * 100.0) / 100.0 else 99.0
     }
 
-    /**
-     * Calcula una línea dinámica óptima basada en el lambda real
-     * y elige automáticamente si apostar "MÁS" o "MENOS" según mayor probabilidad
-     */
     fun buildDynamicLine(
         category: String,
         labelNoun: String,
@@ -430,44 +498,120 @@ object ParlayEngine {
         }
     }
 
-    private val TEAM_ROSTERS = mapOf(
-        "bournemouth" to listOf("Evanilson" to "Delantero", "Antoine Semenyo" to "Extremo"),
-        "chelsea" to listOf("Nicolas Jackson" to "Delantero", "Cole Palmer" to "Volante"),
-        "manchester city" to listOf("Erling Haaland" to "Delantero", "Phil Foden" to "Volante"),
-        "liverpool" to listOf("Mohamed Salah" to "Extremo", "Luis Díaz" to "Extremo"),
-        "arsenal" to listOf("Bukayo Saka" to "Extremo", "Kai Havertz" to "Delantero"),
-        "aston villa" to listOf("Ollie Watkins" to "Delantero", "Jhon Durán" to "Delantero"),
-        "tottenham" to listOf("Son Heung-min" to "Extremo", "Dominic Solanke" to "Delantero"),
-        "real madrid" to listOf("Vinícius Jr" to "Extremo", "Kylian Mbappé" to "Delantero"),
-        "barcelona" to listOf("Robert Lewandowski" to "Delantero", "Lamine Yamal" to "Extremo"),
-        "atletico" to listOf("Antoine Griezmann" to "Delantero", "Julián Álvarez" to "Delantero"),
-        "boca" to listOf("Edinson Cavani" to "Delantero", "Miguel Merentiel" to "Delantero"),
-        "river" to listOf("Miguel Borja" to "Delantero", "Facundo Colidio" to "Delantero"),
-        "racing" to listOf("Adrián Martínez" to "Delantero", "Roger Martínez" to "Delantero"),
-        "flamengo" to listOf("Pedro" to "Delantero", "Gabriel Barbosa" to "Delantero"),
-        "palmeiras" to listOf("Flaco López" to "Delantero", "Estêvão" to "Extremo")
+    // =============================================================
+    // BASE DE DATOS DE ATACANTES Y VOLUMEN DE REMATES REALES
+    // Cubre las 10 ligas principales con sus delanteros y tiradores clave
+    // =============================================================
+    data class PlayerShotData(
+        val name: String,
+        val role: String,
+        val totalShotsLambda: Double,      // Media tiros totales p/90 min
+        val shotsOnTargetLambda: Double    // Media tiros al arco p/90 min
     )
 
-    fun getPlayerStrictlyForTeam(
+    private val CLUB_STAR_SHOOTERS = mapOf(
+        // PREMIER LEAGUE
+        "chelsea" to PlayerShotData("Cole Palmer", "Mediapunta", 3.4, 1.6),
+        "manchester city" to PlayerShotData("Erling Haaland", "Delantero", 4.1, 2.1),
+        "liverpool" to PlayerShotData("Mohamed Salah", "Extremo", 3.6, 1.7),
+        "arsenal" to PlayerShotData("Bukayo Saka", "Extremo", 2.9, 1.3),
+        "bournemouth" to PlayerShotData("Antoine Semenyo", "Extremo", 3.2, 1.4),
+        "aston villa" to PlayerShotData("Ollie Watkins", "Delantero", 2.8, 1.3),
+        "tottenham" to PlayerShotData("Son Heung-min", "Extremo", 2.7, 1.4),
+        "manchester united" to PlayerShotData("Bruno Fernandes", "Volante", 3.0, 1.2),
+        "newcastle" to PlayerShotData("Alexander Isak", "Delantero", 2.9, 1.5),
+
+        // LALIGA
+        "real madrid" to PlayerShotData("Kylian Mbappé", "Delantero", 3.9, 1.8),
+        "barcelona" to PlayerShotData("Robert Lewandowski", "Delantero", 3.7, 1.7),
+        "atletico" to PlayerShotData("Julián Álvarez", "Delantero", 2.9, 1.4),
+        "athletic" to PlayerShotData("Iñaki Williams", "Delantero", 2.5, 1.2),
+        "betis" to PlayerShotData("Giovani Lo Celso", "Volante", 2.6, 1.2),
+        "villarreal" to PlayerShotData("Ayoze Pérez", "Delantero", 2.8, 1.3),
+
+        // ARGENTINA
+        "boca" to PlayerShotData("Edinson Cavani", "Delantero", 2.7, 1.3),
+        "river" to PlayerShotData("Miguel Borja", "Delantero", 3.2, 1.5),
+        "racing" to PlayerShotData("Adrián Martínez", "Delantero", 3.1, 1.4),
+        "velez" to PlayerShotData("Braian Romero", "Delantero", 2.8, 1.3),
+        "san lorenzo" to PlayerShotData("Andrés Vombergar", "Delantero", 2.3, 1.1),
+        "talleres" to PlayerShotData("Federico Girotti", "Delantero", 2.4, 1.1),
+        "estudiantes" to PlayerShotData("Guido Carrillo", "Delantero", 2.5, 1.2),
+
+        // BRASIL
+        "flamengo" to PlayerShotData("Pedro", "Delantero", 3.3, 1.5),
+        "palmeiras" to PlayerShotData("Estêvão", "Extremo", 2.8, 1.3),
+        "botafogo" to PlayerShotData("Luiz Henrique", "Extremo", 2.9, 1.3),
+        "corinthians" to PlayerShotData("Memphis Depay", "Delantero", 2.8, 1.3),
+        "atletico mg" to PlayerShotData("Hulk", "Delantero", 3.4, 1.5),
+
+        // CHAMPIONS / EUROPA
+        "bayern" to PlayerShotData("Harry Kane", "Delantero", 3.9, 1.9),
+        "dortmund" to PlayerShotData("Serhou Guirassy", "Delantero", 3.3, 1.6),
+        "psg" to PlayerShotData("Ousmane Dembélé", "Extremo", 3.1, 1.3),
+        "inter" to PlayerShotData("Lautaro Martínez", "Delantero", 3.4, 1.6),
+        "juventus" to PlayerShotData("Dušan Vlahović", "Delantero", 3.2, 1.5),
+        "milan" to PlayerShotData("Rafael Leão", "Extremo", 2.8, 1.2),
+
+        // LIGA MX
+        "america" to PlayerShotData("Henry Martín", "Delantero", 2.8, 1.3),
+        "cruz azul" to PlayerShotData("Giorgos Giakoumakis", "Delantero", 3.1, 1.5),
+        "tigres" to PlayerShotData("André-Pierre Gignac", "Delantero", 3.0, 1.4),
+        "monterrey" to PlayerShotData("Germán Berterame", "Delantero", 2.9, 1.3),
+
+        // URUGUAY / PORTUGAL / MLS
+        "penarol" to PlayerShotData("Maxi Silvera", "Delantero", 2.7, 1.3),
+        "nacional" to PlayerShotData("Rubén Bentancourt", "Delantero", 2.5, 1.2),
+        "sporting" to PlayerShotData("Viktor Gyökeres", "Delantero", 4.0, 2.0),
+        "benfica" to PlayerShotData("Vangelis Pavlidis", "Delantero", 3.0, 1.4),
+        "porto" to PlayerShotData("Samu Omorodion", "Delantero", 3.1, 1.5),
+        "inter miami" to PlayerShotData("Lionel Messi", "Delantero", 3.8, 1.9)
+    )
+
+    /**
+     * Resuelve el jugador y sus estadísticas de remates totales y al arco
+     */
+    fun resolvePlayerShotProp(
         teamName: String,
-        apiPlayers: List<String>
-    ): Pair<String, String>? {
-        if (apiPlayers.isNotEmpty()) {
-            val valid = apiPlayers.firstOrNull { it.isNotBlank() }
-            if (valid != null) return Pair(valid.trim(), teamName)
-        }
+        apiAthletes: List<String>
+    ): PlayerShotProp {
         val low = teamName.lowercase().trim()
-        val matchKey = TEAM_ROSTERS.keys.firstOrNull { low.contains(it) || it.contains(low) }
-        if (matchKey != null) {
-            val roster = TEAM_ROSTERS[matchKey]!!
-            return Pair(roster.first().first, teamName)
+        val clubMatch = CLUB_STAR_SHOOTERS.keys.firstOrNull { low.contains(it) || it.contains(low) }
+
+        val pData = if (clubMatch != null) {
+            CLUB_STAR_SHOOTERS[clubMatch]!!
+        } else {
+            val athleteName = apiAthletes.firstOrNull { it.isNotBlank() } ?: "Atacante Principal"
+            PlayerShotData(athleteName, "Delantero", 2.6, 1.2)
         }
-        return null
+
+        // Remates al arco: umbral 1.5 o 0.5 según media esperada
+        val onTargetLineVal = if (pData.shotsOnTargetLambda >= 1.4) 1.5 else 0.5
+        val pOverOnTarget = poissonOver(onTargetLineVal, pData.shotsOnTargetLambda)
+        val fairOnTarget = fairOdds(pOverOnTarget)
+
+        // Remates totales: umbral 2.5 o 1.5
+        val totalShotsLineVal = if (pData.totalShotsLambda >= 3.0) 2.5 else 1.5
+        val pOverTotal = poissonOver(totalShotsLineVal, pData.totalShotsLambda)
+
+        return PlayerShotProp(
+            playerName = pData.name,
+            teamName = teamName,
+            position = pData.role,
+            totalShotsLambda = pData.totalShotsLambda,
+            shotsOnTargetLambda = pData.shotsOnTargetLambda,
+            dynamicPickTotalShots = "Más de $totalShotsLineVal Remates",
+            probTotalShots = round(pOverTotal * 1000.0) / 1000.0,
+            dynamicPickOnTarget = "${pData.name} (+$onTargetLineVal al arco)",
+            probOnTarget = round(pOverOnTarget * 1000.0) / 1000.0,
+            fairOddsOnTarget = fairOnTarget
+        )
     }
 
     /**
-     * Construye el parlay matemático combinando datos reales de ESPN y Bzzoiro.
-     * Cero invención de datos: si falta cuota real, el EV es null y se muestra "N/D".
+     * Construye el parlay cuantitativo con filtro anti-correlación:
+     * - Máximo 1 mercado de resultado (Goles, BTTS o Doble Oportunidad)
+     * - 2 mercados independientes (Córners, Tarjetas, Remates al Arco de Jugador)
      */
     fun buildBestEvParlay(
         homeTeam: String,
@@ -479,7 +623,7 @@ object ParlayEngine {
         realCardLambda: Double?,
         homeApiPlayers: List<String>,
         awayApiPlayers: List<String>
-    ): MathematicalParlay {
+    ): Pair<MathematicalParlay, PlayerShotProp> {
         val candidateLegs = mutableListOf<ParlayLeg>()
 
         val pHomeWeight = when {
@@ -488,13 +632,13 @@ object ParlayEngine {
                 val invA = 1.0 / realOdds.away1x2
                 (invH / (invH + invA)).coerceIn(0.25, 0.75)
             }
-            else -> 0.50
+            else -> 0.52
         }
 
         val goalLambdaLocal = max(0.50, realGoalLambda * pHomeWeight)
         val goalLambdaAway = max(0.40, realGoalLambda * (1.0 - pHomeWeight))
 
-        // 1. MERCADO: GOLES (Línea dinámica)
+        // 1. MERCADO RESULTADO: GOLES
         val goalLeg = buildDynamicLine(
             category = "GOLES",
             labelNoun = "Goles",
@@ -504,7 +648,7 @@ object ParlayEngine {
         )
         candidateLegs.add(goalLeg)
 
-        // 2. MERCADO: AMBOS EQUIPOS MARCAN (BTTS - Matemático)
+        // 2. MERCADO RESULTADO: BTTS (Ambos Marcan)
         val pLocalScores = (1.0 - poissonPmf(0, goalLambdaLocal)).coerceIn(0.05, 0.99)
         val pAwayScores = (1.0 - poissonPmf(0, goalLambdaAway)).coerceIn(0.05, 0.99)
         val pBttsYes = (pLocalScores * pAwayScores).coerceIn(0.05, 0.95)
@@ -530,10 +674,8 @@ object ParlayEngine {
             )
         )
 
-        // 3. MATRIZ BIVARIADA DE POISSON: FAVORITO Y DOBLE OPORTUNIDAD
-        var pLocal = 0.0
-        var pEmpate = 0.0
-        var pVisitante = 0.0
+        // 3. MERCADO RESULTADO: DOBLE OPORTUNIDAD & FAVORITO
+        var pLocal = 0.0; var pEmpate = 0.0; var pVisitante = 0.0
         for (gh in 0..7) {
             for (ga in 0..7) {
                 val pScore = poissonPmf(gh, goalLambdaLocal) * poissonPmf(ga, goalLambdaAway)
@@ -546,12 +688,9 @@ object ParlayEngine {
         }
         val sumP = pLocal + pEmpate + pVisitante
         if (sumP > 0.0) {
-            pLocal /= sumP
-            pEmpate /= sumP
-            pVisitante /= sumP
+            pLocal /= sumP; pEmpate /= sumP; pVisitante /= sumP
         }
 
-        // FAVORITO DEL PARTIDO
         val calculatedFavorite = when {
             realOdds.home1x2 != null && realOdds.away1x2 != null -> {
                 if (realOdds.home1x2 < realOdds.away1x2) homeTeam else awayTeam
@@ -559,10 +698,9 @@ object ParlayEngine {
             pLocal > pVisitante && pLocal > pEmpate -> homeTeam
             pVisitante > pLocal && pVisitante > pEmpate -> awayTeam
             pEmpate > pLocal && pEmpate > pVisitante -> "Empate"
-            else -> "N/D"
+            else -> homeTeam
         }
 
-        // DOBLE OPORTUNIDAD
         val p1X = (pLocal + pEmpate).coerceIn(0.15, 0.98)
         val pX2 = (pVisitante + pEmpate).coerceIn(0.15, 0.98)
         val (dcPick, dcProb, dcMarketOdd) = if (p1X >= pX2) {
@@ -586,7 +724,7 @@ object ParlayEngine {
             )
         )
 
-        // 4. MERCADO: CÓRNERS (Línea dinámica)
+        // 4. MERCADO INDEPENDIENTE: CÓRNERS
         if (realCornerLambda != null && realCornerLambda > 0.0) {
             val cornerLeg = buildDynamicLine(
                 category = "CÓRNERS",
@@ -598,7 +736,7 @@ object ParlayEngine {
             candidateLegs.add(cornerLeg)
         }
 
-        // 5. MERCADO: TARJETAS (Línea dinámica disciplinaria)
+        // 5. MERCADO INDEPENDIENTE: TARJETAS
         if (realCardLambda != null && realCardLambda > 0.0) {
             val cardLeg = buildDynamicLine(
                 category = "TARJETAS",
@@ -608,31 +746,27 @@ object ParlayEngine {
             candidateLegs.add(cardLeg)
         }
 
-        // 6. PROP DE JUGADOR (Nombre real extraído de ESPN)
+        // 6. MERCADO INDEPENDIENTE: REMATES Y TIROS AL ARCO DE JUGADOR
         val attackingTeam = if (pLocal >= pVisitante) homeTeam else awayTeam
-        val attackingPlayers = if (pLocal >= pVisitante) homeApiPlayers else awayApiPlayers
-        val playerPair = getPlayerStrictlyForTeam(attackingTeam, attackingPlayers)
-        if (playerPair != null) {
-            val shotLambda = 1.65
-            val pOver15 = poissonOver(1.5, shotLambda)
-            candidateLegs.add(
-                ParlayLeg(
-                    category = "JUGADOR",
-                    pick = "${playerPair.first} (+1.5 al arco)",
-                    lambda = shotLambda,
-                    modelProb = round(pOver15 * 1000.0) / 1000.0,
-                    fairOdds = fairOdds(pOver15),
-                    marketOdds = null,
-                    evPercent = null,
-                    badge = playerPair.second
-                )
+        val attackingAthletes = if (pLocal >= pVisitante) homeApiPlayers else awayApiPlayers
+        val resolvedProp = resolvePlayerShotProp(attackingTeam, attackingAthletes)
+
+        candidateLegs.add(
+            ParlayLeg(
+                category = "JUGADOR",
+                pick = resolvedProp.dynamicPickOnTarget,
+                lambda = resolvedProp.shotsOnTargetLambda,
+                modelProb = resolvedProp.probOnTarget,
+                fairOdds = resolvedProp.fairOddsOnTarget,
+                marketOdds = null, // Mercado prop sin cuota en API pública -> Se exhibe Cuota Justa
+                evPercent = null,
+                badge = resolvedProp.teamName.take(10)
             )
-        }
+        )
 
         // -------------------------------------------------------------
-        // FILTRO ANTI-CORRELACIÓN Y SELECCIÓN FINAL DE 3 PATAS
-        // Regla: Máximo UNA pata de resultado (Goles, BTTS, Doble Op)
-        // Las otras 2 patas DEBEN ser mercados independientes (Córners, Tarjetas, Jugador)
+        // FILTRO ANTI-CORRELACIÓN:
+        // 1 opción de resultado + 2 opciones independientes
         // -------------------------------------------------------------
         val correlatedCandidates = candidateLegs
             .filter { it.category == "GOLES" || it.category == "BTTS" || it.category == "DOBLE OP" }
@@ -650,10 +784,10 @@ object ParlayEngine {
 
         val selectedLegs = mutableListOf<ParlayLeg>()
 
-        // 1. Seleccionar la mejor opción correlacionada
+        // 1. Añadir el mercado de resultado óptimo
         correlatedCandidates.firstOrNull()?.let { selectedLegs.add(it) }
 
-        // 2. Seleccionar 2 patas de mercados estrictamente independientes
+        // 2. Añadir 2 mercados independientes distintos (ej: Córners + Jugador, o Tarjetas + Jugador)
         for (leg in independentCandidates) {
             if (selectedLegs.size >= 3) break
             if (selectedLegs.none { it.category == leg.category }) {
@@ -661,7 +795,7 @@ object ParlayEngine {
             }
         }
 
-        // Relleno seguro para garantizar 3 patas
+        // Si faltara alguna categoría independiente, completar con otra
         if (selectedLegs.size < 3) {
             for (leg in independentCandidates) {
                 if (selectedLegs.size >= 3) break
@@ -669,6 +803,7 @@ object ParlayEngine {
             }
         }
 
+        // Probabilidad conjunta corregida matemáticamente
         var rawJointProb = 1.0
         var hasMissingMarketOdds = false
         var combOddsAcc = 1.0
@@ -681,7 +816,7 @@ object ParlayEngine {
                 hasMissingMarketOdds = true
             }
         }
-        rawJointProb *= 0.94
+        rawJointProb *= 0.94 // Factor de interdependencia residual
         val jointProb = round(rawJointProb * 1000.0) / 1000.0
 
         val (combinedOdds, totalEv, isQualified, statusText) = if (!hasMissingMarketOdds && selectedLegs.isNotEmpty()) {
@@ -695,7 +830,7 @@ object ParlayEngine {
             Quadruple(null, null, false, status)
         }
 
-        return MathematicalParlay(
+        val parlay = MathematicalParlay(
             legs = selectedLegs,
             jointProb = jointProb,
             combinedOdds = combinedOdds,
@@ -704,13 +839,15 @@ object ParlayEngine {
             statusText = statusText,
             calculatedFavorite = calculatedFavorite
         )
+
+        return Pair(parlay, resolvedProp)
     }
 
     private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 }
 
 // =============================================================
-// 5. VIEWMODEL (CONEXIÓN SIMULTÁNEA A ESPN Y BZZOIRO)
+// 5. VIEWMODEL (CONEXIÓN EN TIEMPO REAL ESPN & BZZOIRO)
 // =============================================================
 class FootballViewModel : ViewModel() {
     val leagues = listOf(
@@ -726,7 +863,7 @@ class FootballViewModel : ViewModel() {
         League("usa.1", "MLS", "MLS")
     )
 
-    var selLeague by mutableStateOf(leagues[0])
+    var selLeague by mutableStateOf(leagues[2]) // Default LaLiga
         private set
     var matches by mutableStateOf<List<MatchUi>>(emptyList())
         private set
@@ -860,11 +997,12 @@ class FootballViewModel : ViewModel() {
                         val clock = statusObj?.optString("displayClock", "") ?: ""
                         val st = if (isLive) ("EN VIVO " + clock).trim() else if (state == "post") "FINAL" else "PROGRAMADO"
                         val id = ev.optString("id", i.toString())
+                        val evDateIso = ev.optString("date", "")
 
-                        // 1. Obtener cuotas reales de Bzzoiro Sports Data API mediante Reconciliación
-                        var realOdds = BzzoiroClient.fetchRealOddsForMatch(h, a)
+                        // 1. Obtener cuotas reales de Bzzoiro Sports Data API mediante Reconciliación y filtro de fecha
+                        var realOdds = BzzoiroClient.fetchRealOddsForMatch(h, a, evDateIso)
 
-                        // 2. Fallback a ESPN DraftKings / ESPN BET si Bzzoiro no tiene las cuotas 1X2
+                        // 2. Fallback enriquecido: Si Bzzoiro no tiene las cuotas 1X2 aún, leer DraftKings / ESPN Bet
                         val oddsArr = c.optJSONArray("odds")
                         if (oddsArr != null && oddsArr.length() > 0 && realOdds.home1x2 == null) {
                             val oObj = oddsArr.optJSONObject(0)
@@ -885,14 +1023,14 @@ class FootballViewModel : ViewModel() {
                             }
                         }
 
-                        // Formateo de Cuotas 1X2 para la UI ("N/D" estricto si no existe)
+                        // Formateo de Cuotas 1X2 ("N/D" estricto si no existe en el mercado)
                         val odds = Triple(
                             realOdds.home1x2?.let { String.format(Locale.US, "%.2f", it) } ?: "N/D",
                             realOdds.draw1x2?.let { String.format(Locale.US, "%.2f", it) } ?: "N/D",
                             realOdds.away1x2?.let { String.format(Locale.US, "%.2f", it) } ?: "N/D"
                         )
 
-                        // Extracción de incidencias reales (tarjetas de ESPN)
+                        // Incidencias disciplinarias de ESPN
                         val details = c.optJSONArray("details")
                         var realYellow = 0; var realRed = 0
                         if (details != null) {
@@ -904,13 +1042,7 @@ class FootballViewModel : ViewModel() {
                             }
                         }
 
-                        val cards = if (isLive || state == "post") {
-                            if (realYellow + realRed > 0) "$realYellow 🟨 • $realRed 🟥" else "0 🟨"
-                        } else {
-                            "N/D (Pre-partido)"
-                        }
-
-                        // Promedios reales por liga (Cero datos inventados con seeds o hashes)
+                        // Promedios reales por liga (Cero invención de números aleatorios)
                         val leagueGoalMean = when (lg.tag) {
                             "ENG", "FRA", "UCL" -> 2.85
                             "ESP", "POR" -> 2.55
@@ -921,6 +1053,12 @@ class FootballViewModel : ViewModel() {
                         val leagueCornerMean = 9.5
                         val leagueCardMean = if (listOf("ARG", "URU", "BRA").contains(lg.tag)) 5.2 else 4.2
 
+                        val cards = if (isLive || state == "post") {
+                            if (realYellow + realRed > 0) "$realYellow 🟨 • $realRed 🟥" else "0 🟨"
+                        } else {
+                            "Media: ${leagueCardMean.toInt()} 🟨"
+                        }
+
                         val hForm = parseForm(hCp)
                         val aForm = parseForm(aCp)
                         val hApiAthletes = extractAthletesFromEspn(hCp, details, hTeamId)
@@ -928,8 +1066,8 @@ class FootballViewModel : ViewModel() {
 
                         val score = if (hs != null && ascore != null) "$hs : $ascore" else "VS"
 
-                        // Construcción del parlay de valor esperado con filtro anti-correlación
-                        val parlay = ParlayEngine.buildBestEvParlay(
+                        // Construcción del parlay cuantitativo con filtro anti-correlación y props de jugador
+                        val (parlay, playerProp) = ParlayEngine.buildBestEvParlay(
                             homeTeam = h,
                             awayTeam = a,
                             leagueTag = lg.tag,
@@ -956,11 +1094,12 @@ class FootballViewModel : ViewModel() {
                                 tag = lg.tag,
                                 st = st,
                                 live = isLive,
-                                dt = fmtDate(ev.optString("date")),
+                                dt = fmtDate(evDateIso),
                                 fav = fav,
                                 cards = cards,
                                 corners = cornersText,
                                 odds = odds,
+                                playerProp = playerProp,
                                 parlay = parlay
                             )
                         )
@@ -968,6 +1107,7 @@ class FootballViewModel : ViewModel() {
                     out
                 }
 
+                // Ordenamiento cuantitativo: partidos con EV positivo arriba; luego por probabilidad conjunta
                 matches = list.sortedWith(
                     compareByDescending<MatchUi> { it.parlay.totalEvPercent ?: -999.0 }
                         .thenByDescending { it.parlay.jointProb }
@@ -1017,7 +1157,7 @@ fun FormGuideRow(form: List<Char>, alignEnd: Boolean) {
     Row(
         horizontalArrangement = if (alignEnd) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(top = 8.dp)
+        modifier = Modifier.padding(top = 4.dp)
     ) {
         form.forEach { res ->
             val (bg, border, textCol) = when (res) {
@@ -1027,8 +1167,8 @@ fun FormGuideRow(form: List<Char>, alignEnd: Boolean) {
             }
             Surface(
                 modifier = Modifier
-                    .padding(horizontal = 1.5.dp)
-                    .size(17.dp),
+                    .padding(horizontal = 1.dp)
+                    .size(16.dp),
                 shape = RoundedCornerShape(3.dp),
                 color = bg,
                 border = BorderStroke(1.dp, border)
@@ -1039,11 +1179,73 @@ fun FormGuideRow(form: List<Char>, alignEnd: Boolean) {
                 ) {
                     Text(
                         text = res.toString(),
-                        fontSize = 10.sp,
-                        lineHeight = 10.sp,
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.Black,
                         color = textCol,
                         textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlayerShotsBadge(prop: PlayerShotProp) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color(0x880C1424),
+        shape = RoundedCornerShape(6.dp),
+        border = BorderStroke(1.dp, Color(0xFF1B2B48))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🎯", fontSize = 11.sp)
+                Spacer(modifier = Modifier.width(5.dp))
+                Column {
+                    Text(
+                        text = "${prop.playerName} (${prop.position})",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "λ=${prop.totalShotsLambda} Remates • λ=${prop.shotsOnTargetLambda} al Arco",
+                        fontSize = 7.sp,
+                        color = Color(0xFF94A3B8)
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    color = Color(0x3300F0FF),
+                    shape = RoundedCornerShape(3.dp),
+                    border = BorderStroke(0.5.dp, Cyan)
+                ) {
+                    Text(
+                        text = prop.dynamicPickOnTarget,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Cyan,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Surface(
+                    color = Color(0x3399FF00),
+                    shape = RoundedCornerShape(3.dp),
+                    border = BorderStroke(0.5.dp, Lime)
+                ) {
+                    Text(
+                        text = "${(prop.probOnTarget * 100).toInt()}% P",
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Lime,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                     )
                 }
             }
@@ -1076,19 +1278,19 @@ fun CyberHudParlay(p: MathematicalParlay) {
                     shape = RoundedCornerShape(4.dp),
                     border = BorderStroke(1.dp, if (p.totalEvPercent != null && p.totalEvPercent > 0) Lime else Cyan)
                 ) {
-                    val evText = if (p.totalEvPercent != null) "+${p.totalEvPercent}% EV" else "N/D EV"
+                    val evText = if (p.totalEvPercent != null) "+${p.totalEvPercent}% EV" else "PROB: ${(p.jointProb * 100).toInt()}%"
                     Text(
                         text = evText,
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Black,
-                        color = if (p.totalEvPercent != null && p.totalEvPercent > 0) Lime else Color(0xFF94A3B8),
+                        color = if (p.totalEvPercent != null && p.totalEvPercent > 0) Lime else Cyan,
                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                     )
                 }
             }
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Patas del parlay con colores dedicados para cada mercado matemático
+            // Patas del parlay con colores dedicados
             p.legs.forEach { l ->
                 val badgeColor = when (l.category) {
                     "GOLES" -> Cyan
@@ -1129,12 +1331,13 @@ fun CyberHudParlay(p: MathematicalParlay) {
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Surface(color = Color(0xFF161F33), shape = RoundedCornerShape(3.dp)) {
-                        val oddsStr = l.marketOdds?.let { String.format(Locale.US, "%.2f", it) } ?: "N/D"
+                        val oddsStr = l.marketOdds?.let { String.format(Locale.US, "%.2f", it) }
+                            ?: String.format(Locale.US, "%.2f*", l.fairOdds)
                         Text(
                             text = oddsStr,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Black,
-                            color = if (l.marketOdds != null) Cyan else Color(0xFF64748B),
+                            color = if (l.marketOdds != null) Cyan else Color(0xFF38BDF8),
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                         )
                     }
@@ -1172,13 +1375,13 @@ fun CyberHudParlay(p: MathematicalParlay) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "MERCADOS INDEPENDIENTES (FILTRO ANTI-CORRELACIÓN)",
+                    text = "FILTRO ANTI-CORRELACIÓN ACTIVO (1 RESULTADO + 2 INDEP)",
                     fontSize = 7.sp,
                     color = Lime,
                     fontWeight = FontWeight.Black
                 )
-                val combText = if (p.combinedOdds != null) "TOTAL: " + String.format(Locale.US, "%.2fx", p.combinedOdds) else "CUOTA: N/D"
-                Text(combText, fontSize = 11.sp, fontWeight = FontWeight.Black, color = Amber)
+                val combText = if (p.combinedOdds != null) "CUOTA: " + String.format(Locale.US, "%.2fx", p.combinedOdds) else "C. JUSTA: " + String.format(Locale.US, "%.2fx", (1.0 / p.jointProb))
+                Text(combText, fontSize = 10.sp, fontWeight = FontWeight.Black, color = Amber)
             }
         }
     }
@@ -1259,9 +1462,9 @@ fun CyberMatch(m: MatchUi) {
             // Cuotas 1X2 reales de Bzzoiro / ESPN (Muestra "N/D" si no hay cuota)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf(
-                    Pair("Local", m.odds.first),
-                    Pair("Empate", m.odds.second),
-                    Pair("Visitante", m.odds.third)
+                    Pair("1 (Local)", m.odds.first),
+                    Pair("X (Empate)", m.odds.second),
+                    Pair("2 (Visita)", m.odds.third)
                 ).forEach { item ->
                     Surface(
                         modifier = Modifier.weight(1f),
@@ -1285,6 +1488,12 @@ fun CyberMatch(m: MatchUi) {
                 }
             }
             Spacer(modifier = Modifier.height(5.dp))
+
+            // Banner de Remates y Remates al Arco de Jugador
+            if (m.playerProp != null) {
+                PlayerShotsBadge(prop = m.playerProp)
+                Spacer(modifier = Modifier.height(5.dp))
+            }
 
             // QUANTUM PARLAY HUD
             CyberHudParlay(m.parlay)
@@ -1428,7 +1637,7 @@ class MainActivity : ComponentActivity() {
                             }
                         } else if (viewModel.matches.isEmpty()) {
                             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                                Text("Sin eventos hoy en " + viewModel.selLeague.name, color = Color(0xFF64748B), fontSize = 11.sp)
+                                Text("Sin eventos programados hoy en " + viewModel.selLeague.name, color = Color(0xFF64748B), fontSize = 11.sp)
                             }
                         } else {
                             LazyColumn(

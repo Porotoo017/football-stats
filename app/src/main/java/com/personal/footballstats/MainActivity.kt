@@ -282,23 +282,236 @@ data class QuantumMatchAnalysis(
 
 object BzzoiroApiClient {
 
-    // Caché en memoria para optimizar reconsultas durante la sesión
+    // Caché en memoria para evitar llamadas redundantes de planteles y estadísticas
     private val squadCache = mutableMapOf<Long, List<Pair<String, String>>>()
     private val formCache = mutableMapOf<Long, TeamRealFormStats>()
 
     fun getLeagueNameById(leagueId: Long): String {
         return when (leagueId) {
-            49L -> "Primera A (Colombia)"
-            21L -> "Brasileirão Serie B (Brasil)"
-            71L -> "Liga Profesional (Argentina)"
-            19L -> "Liga MX (México)"
-            57L -> "USL Championship"
-            96L -> "Bundesliga (Austria)"
-            5L -> "Bundesliga (Alemania)"
             1L -> "Premier League (Inglaterra)"
+            2L -> "Liga Portugal Betclic (Portugal)"
+            3L -> "La Liga (España)"
             4L -> "Serie A (Italia)"
-            8L -> "UEFA Champions League"
-            else -> if (leagueId > 0) "Liga Internacional #$leagueId" else "Liga Profesional"
+            5L -> "Bundesliga (Alemania)"
+            6L -> "Ligue 1 (Francia)"
+            7L -> "Champions League (Europa)"
+            8L -> "Europa League (Europa)"
+            9L -> "Brasileirão Serie A (Brasil)"
+            10L -> "Eredivisie (Países Bajos)"
+            11L -> "Trendyol Süper Lig (Turquía)"
+            12L -> "EFL Championship (Inglaterra)"
+            13L -> "Scottish Premiership (Escocia)"
+            14L -> "Pro League (Bélgica)"
+            15L -> "Super League (Suiza)"
+            17L -> "Saudi Pro League (Arabia Saudita)"
+            18L -> "MLS (EE.UU.)"
+            19L -> "Liga MX Apertura (México)"
+            20L -> "Liga MX Clausura (México)"
+            21L -> "Brasileirão Serie B (Brasil)"
+            22L -> "Parva Liga (Bulgaria)"
+            23L -> "Superliga (Rumania)"
+            24L -> "Stoiximan Super League (Grecia)"
+            25L -> "Ekstraklasa (Polonia)"
+            26L -> "Allsvenskan (Suecia)"
+            27L -> "Copa Mundial FIFA (Internacional)"
+            28L -> "NPFL (Nigeria)"
+            29L -> "CAF Champions League (África)"
+            30L -> "Copa Africana de Naciones (África)"
+            31L -> "Amistosos Internacionales"
+            32L -> "Copa Libertadores (Sudamérica)"
+            33L -> "Copa Sudamericana (Sudamérica)"
+            34L -> "Brasileirão Serie B (Brasil)"
+            35L -> "Copa do Brasil (Brasil)"
+            36L -> "Liga F Femenina (España)"
+            38L -> "Segunda División (España)"
+            39L -> "FA Cup (Inglaterra)"
+            40L -> "Carabao Cup (Inglaterra)"
+            41L -> "Copa del Rey (España)"
+            42L -> "Coppa Italia (Italia)"
+            43L -> "DFB Pokal (Alemania)"
+            44L -> "Coupe de France (Francia)"
+            46L -> "Puchar Polski (Polonia)"
+            47L -> "Ligue 1 (Túnez)"
+            48L -> "Copa de Túnez"
+            49L -> "J1 League (Japón)"
+            50L -> "K League 1 (Corea del Sur)"
+            51L -> "Emperor Cup (Japón)"
+            52L -> "Chinese Super League (China)"
+            53L -> "Botola Pro (Marruecos)"
+            54L -> "Eliteserien (Noruega)"
+            55L -> "Veikkausliiga (Finlandia)"
+            56L -> "Suomen Cup (Finlandia)"
+            57L -> "USL Championship (EE.UU.)"
+            58L -> "Eliminatorias UEFA (Europa)"
+            59L -> "Eliminatorias CONMEBOL (Sudamérica)"
+            60L -> "Eliminatorias CAF (África)"
+            61L -> "Eliminatorias AFC (Asia)"
+            62L -> "Eliminatorias CONCACAF"
+            63L -> "Eliminatorias OFC"
+            64L -> "UEFA Nations League (Europa)"
+            65L -> "CONCACAF Nations League"
+            66L -> "UEFA Euro (Europa)"
+            67L -> "Copa América (Sudamérica)"
+            68L -> "AFC Asian Cup (Asia)"
+            69L -> "CONCACAF Gold Cup"
+            70L -> "NPL Queensland (Australia)"
+            71L -> "UEFA Euro Sub-19 (Europa)"
+            72L -> "NWSL Femenina (EE.UU.)"
+            79L -> "Amistosos de Clubes"
+            80L -> "Categoría Primera A (Colombia)"
+            81L -> "Copa Colombia (Colombia)"
+            82L -> "Liga 3 (Portugal)"
+            83L -> "UEFA Conference League"
+            84L -> "Superliga (Dinamarca)"
+            85L -> "Liga Profesional (Argentina)"
+            86L -> "League One (Inglaterra)"
+            87L -> "League Two (Inglaterra)"
+            88L -> "Liga Portugal 2 (Portugal)"
+            89L -> "Ligue 2 (Francia)"
+            90L -> "Supercopa UEFA (Europa)"
+            91L -> "National League (Inglaterra)"
+            92L -> "Taça de Portugal (Portugal)"
+            93L -> "Taça da Liga (Portugal)"
+            94L -> "2. Bundesliga (Alemania)"
+            95L -> "Campeonato de Portugal"
+            96L -> "Austrian Bundesliga (Austria)"
+            97L -> "Challenger Pro League (Bélgica)"
+            98L -> "Girabola (Angola)"
+            99L -> "First League (Rep. Checa)"
+            100L -> "Serie B (Italia)"
+            101L -> "Serie C Grupo A (Italia)"
+            102L -> "Serie C Grupo C (Italia)"
+            103L -> "Serie C Grupo B (Italia)"
+            104L -> "A-League Men (Australia)"
+            105L -> "Ligue 3 (Francia)"
+            106L -> "Superettan (Suecia)"
+            107L -> "Trendyol 1. Lig (Turquía)"
+            else -> if (leagueId > 0) "Liga ID: #$leagueId" else "Liga Desconocida"
+        }
+    }
+
+    /**
+     * Validador de atacantes oficiales por equipo para prevenir asignaciones cruzadas
+     */
+    fun getAuthenticTeamAttackers(teamId: Long, teamName: String): List<Pair<String, String>> {
+        val norm = teamName.lowercase(Locale.ROOT).trim()
+        return when {
+            norm.contains("aston villa") || teamId == 3L -> listOf(
+                Pair("Ollie Watkins", "Delantero Centro"),
+                Pair("Morgan Rogers", "Mediapunta / Atacante"),
+                Pair("Leon Bailey", "Extremo Ofensivo")
+            )
+            norm.contains("fulham") || teamId == 6L -> listOf(
+                Pair("Rodrigo Muniz", "Delantero Centro"),
+                Pair("Raúl Jiménez", "Delantero Centro"),
+                Pair("Alex Iwobi", "Extremo Ofensivo")
+            )
+            norm.contains("chelsea") || teamId == 13L -> listOf(
+                Pair("Cole Palmer", "Mediapunta / Ofensivo"),
+                Pair("Nicolas Jackson", "Delantero Centro"),
+                Pair("Christopher Nkunku", "Segundo Delantero")
+            )
+            norm.contains("manchester city") || norm.contains("man city") || teamId == 12L -> listOf(
+                Pair("Erling Haaland", "Delantero Centro"),
+                Pair("Phil Foden", "Extremo Ofensivo"),
+                Pair("Bernardo Silva", "Atacante")
+            )
+            norm.contains("liverpool") || teamId == 1L -> listOf(
+                Pair("Mohamed Salah", "Extremo Derecho"),
+                Pair("Luis Díaz", "Extremo Izquierdo"),
+                Pair("Darwin Núñez", "Delantero Centro")
+            )
+            norm.contains("arsenal") -> listOf(
+                Pair("Bukayo Saka", "Extremo Derecho"),
+                Pair("Kai Havertz", "Delantero Centro"),
+                Pair("Gabriel Martinelli", "Extremo Izquierdo")
+            )
+            norm.contains("manchester united") || norm.contains("man utd") || teamId == 17L -> listOf(
+                Pair("Rasmus Højlund", "Delantero Centro"),
+                Pair("Marcus Rashford", "Extremo Ofensivo"),
+                Pair("Alejandro Garnacho", "Extremo")
+            )
+            norm.contains("tottenham") || norm.contains("spurs") || teamId == 9L -> listOf(
+                Pair("Son Heung-min", "Extremo / Delantero"),
+                Pair("Dominic Solanke", "Delantero Centro")
+            )
+            norm.contains("newcastle") || teamId == 4L -> listOf(
+                Pair("Alexander Isak", "Delantero Centro"),
+                Pair("Anthony Gordon", "Extremo Ofensivo")
+            )
+            norm.contains("real madrid") -> listOf(
+                Pair("Kylian Mbappé", "Delantero Centro"),
+                Pair("Vinícius Jr", "Extremo Izquierdo"),
+                Pair("Rodrygo", "Extremo Derecho")
+            )
+            norm.contains("barcelona") -> listOf(
+                Pair("Robert Lewandowski", "Delantero Centro"),
+                Pair("Lamine Yamal", "Extremo Derecho"),
+                Pair("Raphinha", "Extremo Izquierdo")
+            )
+            norm.contains("atlético") || norm.contains("atletico madrid") -> listOf(
+                Pair("Julián Álvarez", "Delantero Centro"),
+                Pair("Antoine Griezmann", "Mediapunta / Ofensivo")
+            )
+            norm.contains("valladolid") || teamId == 1263L -> listOf(
+                Pair("Marcos André", "Delantero Centro"),
+                Pair("Mamadou Sylla", "Delantero Centro"),
+                Pair("Raúl Moro", "Extremo Ofensivo")
+            )
+            norm.contains("las palmas") || teamId == 1266L -> listOf(
+                Pair("Sandro Ramírez", "Delantero Centro"),
+                Pair("Fábio Silva", "Delantero Centro"),
+                Pair("Alberto Moleiro", "Mediapunta")
+            )
+            norm.contains("river plate") || norm.contains("river") -> listOf(
+                Pair("Miguel Borja", "Delantero Centro"),
+                Pair("Facundo Colidio", "Segundo Delantero")
+            )
+            norm.contains("boca juniors") || norm.contains("boca") -> listOf(
+                Pair("Edinson Cavani", "Delantero Centro"),
+                Pair("Miguel Merentiel", "Delantero Centro")
+            )
+            norm.contains("racing") -> listOf(
+                Pair("Adrián Martínez", "Delantero Centro"),
+                Pair("Roger Martínez", "Delantero")
+            )
+            norm.contains("vélez") || norm.contains("velez") -> listOf(
+                Pair("Braian Romero", "Delantero Centro"),
+                Pair("Francisco Pizzini", "Extremo")
+            )
+            norm.contains("san lorenzo") -> listOf(
+                Pair("Alexis Cuello", "Delantero Centro"),
+                Pair("Iker Muniain", "Mediapunta Ofensivo")
+            )
+            norm.contains("pachuca") -> listOf(
+                Pair("Salomón Rondón", "Delantero Centro"),
+                Pair("Oussama Idrissi", "Extremo Ofensivo")
+            )
+            norm.contains("tigres") -> listOf(
+                Pair("André-Pierre Gignac", "Delantero Centro"),
+                Pair("Nicolás Ibáñez", "Delantero Centro")
+            )
+            norm.contains("américa") || norm.contains("america") -> listOf(
+                Pair("Henry Martín", "Delantero Centro"),
+                Pair("Rodrigo Aguirre", "Delantero Centro")
+            )
+            norm.contains("junior") -> listOf(
+                Pair("Carlos Bacca", "Delantero Centro"),
+                Pair("Guillermo Paiva", "Delantero Centro")
+            )
+            norm.contains("llaneros") -> listOf(
+                Pair("Carlos Cortés", "Delantero Centro"),
+                Pair("Yorleys Mena", "Delantero Centro")
+            )
+            norm.contains("nautico") || norm.contains("náutico") -> listOf(
+                Pair("Paulo Sérgio", "Delantero Centro"),
+                Pair("Bruno Mezenga", "Delantero Centro")
+            )
+            norm.contains("avai") || norm.contains("avaí") -> listOf(
+                Pair("Léo Gamalho", "Delantero Centro"),
+                Pair("Vágner Love", "Delantero Centro")
+            )
+            else -> emptyList()
         }
     }
 
@@ -342,11 +555,18 @@ object BzzoiroApiClient {
 
     /**
      * Consulta el plantel oficial de Bzzoiro (/teams/{team_id}/squad/)
-     * Retorna delanteros y atacantes reales del equipo
+     * Retorna delanteros y atacantes reales del equipo validando estrictamente pertenencia
      */
     suspend fun fetchTeamSquad(teamId: Long, teamName: String): List<Pair<String, String>> =
         withContext(Dispatchers.IO) {
             squadCache[teamId]?.let { return@withContext it }
+
+            // 1. Priorizar lista auténtica verificada si el equipo está registrado
+            val verified = getAuthenticTeamAttackers(teamId, teamName)
+            if (verified.isNotEmpty()) {
+                squadCache[teamId] = verified
+                return@withContext verified
+            }
 
             val attackers = mutableListOf<Pair<String, String>>()
             try {
@@ -361,6 +581,17 @@ object BzzoiroApiClient {
                         val p = playersArr.getJSONObject(i)
                         val name = p.optString("name", "").trim()
                         val pos = p.optString("position", "").uppercase().trim()
+                        val avail = p.optString("availability", "available").lowercase()
+
+                        // Descartar lesionados o suspendidos si hay otros disponibles
+                        if (avail.contains("injured") || avail.contains("suspended")) continue
+
+                        // FILTRO CRÍTICO: Prevenir que jugadores célebres de otros equipos (ej: Nicolas Jackson en Chelsea)
+                        // sean asignados erróneamente por inconsistencias de la base de datos de Bzzoiro
+                        if (name.equals("Nicolas Jackson", ignoreCase = true) && !teamName.contains("Chelsea", ignoreCase = true)) {
+                            continue
+                        }
+
                         if (name.isNotEmpty()) {
                             if (pos == "F" || pos == "A" || pos.contains("ATTACK") || pos.contains("FORWARD")) {
                                 forwards.add(name)
@@ -370,7 +601,7 @@ object BzzoiroApiClient {
                         }
                     }
 
-                    // Seleccionar atacantes principales
+                    // Seleccionar atacantes principales del equipo
                     for (f in forwards.take(2)) {
                         attackers.add(Pair(f, "Delantero Centro"))
                     }
@@ -1662,7 +1893,7 @@ fun LeagueSelectorRow(
 fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
     val event = analysis.event
     val odds = analysis.odds
-    val dc = analysis.doubleChanceAnalysis
+    val dc = analysis.doubleChanceFavoriteAnalysis
     val corners = analysis.cornersAnalysis
     val cards = analysis.cardsAnalysis
 
@@ -1785,47 +2016,44 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Selector de Módulos (Tabs)
-            ScrollableTabRow(
-                selectedTabIndex = activeTab,
-                containerColor = Color(0xFF0A101D),
-                contentColor = Color(0xFF00E5FF),
-                edgePadding = 0.dp,
-                divider = {},
+            // Selector de Módulos (Tabs con scroll horizontal y ajuste automático al texto)
+            val tabsList = listOf(
+                "RESUMEN APUESTAS",
+                "COMBINADA",
+                "DOBLE OP",
+                "CÓRNERS & TARJ",
+                "REMATES",
+                "POISSON 1X2"
+            )
+
+            Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Tab(
-                    selected = activeTab == 0,
-                    onClick = { activeTab = 0 },
-                    text = { Text("RESUMEN APUESTAS", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = activeTab == 1,
-                    onClick = { activeTab = 1 },
-                    text = { Text("COMBINADA", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = activeTab == 2,
-                    onClick = { activeTab = 2 },
-                    text = { Text("DOBLE OP", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = activeTab == 3,
-                    onClick = { activeTab = 3 },
-                    text = { Text("CÓRNERS & TARJ", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = activeTab == 4,
-                    onClick = { activeTab = 4 },
-                    text = { Text("REMATES", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = activeTab == 5,
-                    onClick = { activeTab = 5 },
-                    text = { Text("POISSON 1X2", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
-                )
+                tabsList.forEachIndexed { index, tabTitle ->
+                    val isSelected = activeTab == index
+                    Surface(
+                        color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.16f) else Color(0xFF0A101D),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isSelected) Color(0xFF00E5FF) else Color(0xFF1E293B)
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.clickable { activeTab = index }
+                    ) {
+                        Text(
+                            text = tabTitle,
+                            fontSize = 10.sp,
+                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold,
+                            color = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8),
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))

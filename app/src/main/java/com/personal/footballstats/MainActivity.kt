@@ -32,6 +32,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,6 +42,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -193,6 +198,19 @@ data class ParlayLeg(
     val isSafePick: Boolean
 )
 
+data class MatchBettingSummary(
+    val safePick: String,
+    val safePickOdds: String,
+    val safePickProb: String,
+    val valuePick: String,
+    val valuePickOdds: String,
+    val playerPick: String,
+    val playerPickOdds: String,
+    val cardsPick: String,
+    val predictedScore: String,
+    val quickVerdict: String
+)
+
 data class QuantumMatchAnalysis(
     val event: ApexEvent,
     val odds: RealOdds,
@@ -212,6 +230,7 @@ data class QuantumMatchAnalysis(
     val cornersAnalysis: CornersAnalysis,
     val cardsAnalysis: CardsAnalysis,
     val playerShotProps: List<PlayerShotProp>,
+    val bettingSummary: MatchBettingSummary,
     val parlayLegs: List<ParlayLeg>,
     val jointParlayProb: Double,
     val parlayFairOdds: Double,
@@ -384,7 +403,7 @@ object QuantumMathEngine {
             else -> "COBERTURA BALANCEADA (${(modelP * 100).toInt()}%)"
         }
 
-        val desc = "El modelo cuántico evalúa a $favTeam con superioridad táctica. La selección $pickCode garantiza acierto con victoria de $favTeam o empate ante $dogTeam, con un ${(modelP * 100).toInt()}% de cobertura matemática."
+        val desc = "Superioridad táctica de $favTeam. La selección $pickCode garantiza acierto con victoria o empate, con ${(modelP * 100).toInt()}% de cobertura."
 
         return DoubleChanceFavoriteAnalysis(
             favoriteTeam = favTeam,
@@ -443,9 +462,9 @@ object QuantumMathEngine {
         val pO45 = 1.0 - poissonCdf(4, expTotal)
 
         val friction = when {
-            expTotal >= 5.5 -> "ALTA FRICCIÓN (ÁRBITRO SEVERO)"
-            expTotal >= 4.5 -> "INTENSIDAD COMPETITIVA MEDIA"
-            else -> "JUEGO LIMPIO / TEMPLADO"
+            expTotal >= 5.5 -> "ALTA FRICCIÓN"
+            expTotal >= 4.5 -> "INTENSIDAD MEDIA"
+            else -> "TEMPLADO"
         }
 
         val (recPick, recP, recFair) = if (expTotal >= 5.0) {
@@ -481,7 +500,6 @@ object QuantumMathEngine {
         val homeRoster = PlayerRosterDatabase.getPlayersForTeam(homeTeam)
         val awayRoster = PlayerRosterDatabase.getPlayersForTeam(awayTeam)
 
-        // Jugador 1 Local
         val p1 = homeRoster.getOrNull(0) ?: Pair("Braian Romero", "Delantero Centro")
         val hFwdShots = (lambdaHome * 1.85).coerceIn(1.9, 3.9)
         val hFwdSoT = (hFwdShots * 0.46).coerceIn(0.9, 1.95)
@@ -509,7 +527,6 @@ object QuantumMathEngine {
             )
         )
 
-        // Jugador 2 Local
         val p2 = homeRoster.getOrNull(1) ?: Pair("Claudio Aquino", "Mediapunta")
         val hWingShots = (lambdaHome * 1.35).coerceIn(1.3, 2.7)
         val hWingSoT = (hWingShots * 0.40).coerceIn(0.6, 1.3)
@@ -531,7 +548,6 @@ object QuantumMathEngine {
             )
         )
 
-        // Jugador 3 Visitante
         val p3 = awayRoster.getOrNull(0) ?: Pair("Alexis Cuello", "Delantero Centro")
         val aFwdShots = (lambdaAway * 1.75).coerceIn(1.6, 3.6)
         val aFwdSoT = (aFwdShots * 0.44).coerceIn(0.7, 1.8)
@@ -738,7 +754,20 @@ object QuantumMathEngine {
             val q = 1.0 - p
             val f = ((b * p) - q) / b
             (max(0.0, f) * 0.25 * 100.0).coerceIn(0.5, 5.0)
-        } else 1.75
+        } else 2.2
+
+        val summary = MatchBettingSummary(
+            safePick = dcAnalysis.pickTitle,
+            safePickOdds = if (dcAnalysis.realOdds != null) String.format(Locale.US, "@%.2f", dcAnalysis.realOdds) else "@1.18",
+            safePickProb = "${(dcAnalysis.modelProb * 100).toInt()}% prob",
+            valuePick = cornersAnalysis.recommendedPick,
+            valuePickOdds = if (odds.overCornerLine != null) String.format(Locale.US, "@%.2f", odds.overCornerLine) else "@1.80",
+            playerPick = if (mainFwd != null) "${mainFwd.fullName}: ${mainFwd.pickOnTarget}" else "Delantero: +0.5 al Arco",
+            playerPickOdds = if (mainFwd != null) String.format(Locale.US, "@%.2f", mainFwd.fairOddsOnTarget) else "@1.50",
+            cardsPick = cardsAnalysis.recommendedPick,
+            predictedScore = bestScore,
+            quickVerdict = "Base segura con ${dcAnalysis.pickCode} + ${cornersAnalysis.recommendedPick}. Buen valor en remate al arco de ${mainFwd?.fullName ?: "Delantero"}."
+        )
 
         return QuantumMatchAnalysis(
             event = event,
@@ -759,6 +788,7 @@ object QuantumMathEngine {
             cornersAnalysis = cornersAnalysis,
             cardsAnalysis = cardsAnalysis,
             playerShotProps = playerProps,
+            bettingSummary = summary,
             parlayLegs = legs,
             jointParlayProb = jointProb,
             parlayFairOdds = cumFairOdds,
@@ -1133,7 +1163,7 @@ object PrivateFeedClient {
 }
 
 // ==============================================================================
-// 5. VIEWMODEL: GESTIÓN DE 24 HORAS, LIGAS Y ANÁLISIS CUÁNTICO
+// 5. VIEWMODEL: GESTIÓN DE 24 HORAS, AUTO-REFRESH CADA 30 MINUTOS Y LIGAS
 // ==============================================================================
 
 class FootballStatsViewModel : ViewModel() {
@@ -1147,8 +1177,13 @@ class FootballStatsViewModel : ViewModel() {
     var errorMessage by mutableStateOf<String?>(null)
         private set
 
+    var lastUpdatedTime by mutableStateOf("Sincronizado ahora")
+        private set
+
     var selectedLeagueFilter by mutableStateOf("ALL")
     var onlyNext24Hours by mutableStateOf(true)
+
+    private var autoRefreshJob: Job? = null
 
     val availableLeagues: List<Pair<String, String>>
         get() {
@@ -1177,6 +1212,17 @@ class FootballStatsViewModel : ViewModel() {
 
     init {
         loadData()
+        startAutoRefresh()
+    }
+
+    private fun startAutoRefresh() {
+        autoRefreshJob?.cancel()
+        autoRefreshJob = viewModelScope.launch {
+            while (isActive) {
+                delay(30L * 60L * 1000L) // 30 minutos
+                loadData()
+            }
+        }
     }
 
     fun loadData() {
@@ -1207,6 +1253,9 @@ class FootballStatsViewModel : ViewModel() {
                     }
                     allAnalyses = list
                 }
+
+                val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+                lastUpdatedTime = "Actualizado ${timeFormat.format(now)} hs (Auto 30 min)"
             } catch (e: Exception) {
                 e.printStackTrace()
                 errorMessage = "Enlace cuántico reconfigurado: operando con telemetría de respaldo local."
@@ -1505,7 +1554,8 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
         topBar = {
             ApexHeader(
                 onRefresh = { viewModel.loadData() },
-                isLoading = isLoading
+                isLoading = isLoading,
+                lastSync = viewModel.lastUpdatedTime
             )
         },
         containerColor = Color(0xFF070B14)
@@ -1552,7 +1602,7 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
                         CircularProgressIndicator(color = Color(0xFF00E5FF))
                         Spacer(modifier = Modifier.height(14.dp))
                         Text(
-                            text = "SINCRONIZANDO MATRIZ CUÁNTICA EN VIVO...",
+                            text = "SINCRONIZANDO EVENTOS...",
                             color = Color(0xFF00E5FF),
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
@@ -1609,7 +1659,7 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
 // ==============================================================================
 
 @Composable
-fun ApexHeader(onRefresh: () -> Unit, isLoading: Boolean) {
+fun ApexHeader(onRefresh: () -> Unit, isLoading: Boolean, lastSync: String) {
     Surface(
         color = Color(0xFF0C1322),
         border = BorderStroke(1.dp, Color(0xFF1E293B)),
@@ -1618,7 +1668,7 @@ fun ApexHeader(onRefresh: () -> Unit, isLoading: Boolean) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -1634,16 +1684,16 @@ fun ApexHeader(onRefresh: () -> Unit, isLoading: Boolean) {
                         text = "APEX QUANTUM STRIKE HUD",
                         fontWeight = FontWeight.Black,
                         fontSize = 16.sp,
-                        letterSpacing = 1.2.sp,
+                        letterSpacing = 1.1.sp,
                         color = Color(0xFFF8FAFC)
                     )
                 }
                 Text(
-                    text = "FEED PRIVADO • DOBLE OPORTUNIDAD • CÓRNERS • TARJETAS • JUGADORES",
+                    text = "FEED PRIVADO • $lastSync",
                     fontSize = 9.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFF64748B),
-                    letterSpacing = 0.5.sp
+                    letterSpacing = 0.4.sp
                 )
             }
 
@@ -1709,7 +1759,7 @@ fun TimeWindowSelectorRow(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "PRÓXIMAS 24 HORAS",
+                            text = "PRÓXIMAS 24H",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (only24h) Color(0xFF00E5FF) else Color(0xFF94A3B8)
@@ -1758,7 +1808,7 @@ fun LeagueSelectorRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF080D18))
-            .padding(vertical = 8.dp),
+            .padding(vertical = 7.dp),
         contentPadding = PaddingValues(horizontal = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -1778,7 +1828,7 @@ fun LeagueSelectorRow(
                     fontSize = 11.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     color = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8),
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                 )
             }
         }
@@ -1920,26 +1970,31 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
                 Tab(
                     selected = activeTab == 0,
                     onClick = { activeTab = 0 },
-                    text = { Text("DOBLE OP (FAV)", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("RESUMEN APUESTAS", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
                 )
                 Tab(
                     selected = activeTab == 1,
                     onClick = { activeTab = 1 },
-                    text = { Text("CÓRNERS & TARJETAS", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("COMBINADA", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
                 )
                 Tab(
                     selected = activeTab == 2,
                     onClick = { activeTab = 2 },
-                    text = { Text("JUGADORES (REMATES)", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("DOBLE OP", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
                 )
                 Tab(
                     selected = activeTab == 3,
                     onClick = { activeTab = 3 },
-                    text = { Text("PARLAY CUÁNTICO", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("CÓRNERS & TARJ", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
                 )
                 Tab(
                     selected = activeTab == 4,
                     onClick = { activeTab = 4 },
+                    text = { Text("REMATES", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = activeTab == 5,
+                    onClick = { activeTab = 5 },
                     text = { Text("POISSON 1X2", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
                 )
             }
@@ -1947,11 +2002,12 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
             Spacer(modifier = Modifier.height(10.dp))
 
             when (activeTab) {
-                0 -> DoubleChanceModuleView(dc = dc)
-                1 -> CornersAndCardsModuleView(corners = corners, cards = cards)
-                2 -> PlayerShotsModuleView(players = analysis.playerShotProps)
-                3 -> QuantumParlayModuleView(analysis = analysis)
-                4 -> Poisson1X2ModuleView(analysis = analysis)
+                0 -> MatchBettingSummaryView(summary = analysis.bettingSummary)
+                1 -> MatchBetBuilderCardView(analysis = analysis)
+                2 -> DoubleChanceModuleView(dc = dc)
+                3 -> CornersAndCardsModuleView(corners = corners, cards = cards)
+                4 -> PlayerShotsModuleView(players = analysis.playerShotProps)
+                5 -> Poisson1X2ModuleView(analysis = analysis)
             }
         }
     }
@@ -1961,7 +2017,7 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
 fun RecentFormDotsRow(formList: List<MatchFormResult>, label: String) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Text(
             text = "$label: ",
@@ -1971,22 +2027,26 @@ fun RecentFormDotsRow(formList: List<MatchFormResult>, label: String) {
         )
         for (item in formList) {
             val bgColor = when (item.outcome) {
-                FormOutcome.WIN -> Color(0xFF10B981)   // Verde
-                FormOutcome.DRAW -> Color(0xFFF59E0B)  // Amarillo
-                FormOutcome.LOSS -> Color(0xFFEF4444)  // Rojo
+                FormOutcome.WIN -> Color(0xFF10B981)
+                FormOutcome.DRAW -> Color(0xFFF59E0B)
+                FormOutcome.LOSS -> Color(0xFFEF4444)
             }
             Box(
                 modifier = Modifier
-                    .size(16.dp)
+                    .size(19.dp)
                     .clip(CircleShape)
                     .background(bgColor),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = item.code,
-                    fontSize = 9.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color(0xFF070B14)
+                    color = Color(0xFF070B14),
+                    textAlign = TextAlign.Center,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false)
+                    )
                 )
             }
         }
@@ -1994,7 +2054,237 @@ fun RecentFormDotsRow(formList: List<MatchFormResult>, label: String) {
 }
 
 // ==============================================================================
-// 8. MÓDULOS DE ANÁLISIS: DOBLE OPORTUNIDAD, CÓRNERS, TARJETAS, JUGADORES
+// 8. NUEVOS MÓDULOS: RESUMEN DE APUESTAS Y COMBINADA DESTACADA
+// ==============================================================================
+
+@Composable
+fun MatchBettingSummaryView(summary: MatchBettingSummary) {
+    Surface(
+        color = Color(0xFF091120),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "📋 RESUMEN PARA TU APUESTA",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 11.sp,
+                    color = Color(0xFF00E5FF)
+                )
+                Surface(
+                    color = Color(0xFF10B981).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        text = "HOJA DE RUTA",
+                        color = Color(0xFF10B981),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🟢 Apuesta Segura (Bajo Riesgo):",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "${summary.safePick} (${summary.safePickOdds})",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF10B981)
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🚩 Apuesta de Valor (Córners):",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "${summary.valuePick} (${summary.valuePickOdds})",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF38BDF8)
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🎯 Prop de Jugador:",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "${summary.playerPick} (${summary.playerPickOdds})",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFFA855F7)
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "⚽ Marcador Más Probable:",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = summary.predictedScore,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFFF59E0B)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Surface(
+                color = Color(0xFF0F1A2E),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "💡 Veredicto: ${summary.quickVerdict}",
+                    fontSize = 10.sp,
+                    color = Color(0xFFCBD5E1),
+                    lineHeight = 14.sp,
+                    modifier = Modifier.padding(8.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun MatchBetBuilderCardView(analysis: QuantumMatchAnalysis) {
+    Surface(
+        color = Color(0xFF0C0F1E),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0xFFA855F7).copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "⚡ COMBINADA DEL PARTIDO",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 11.sp,
+                    color = Color(0xFFA855F7)
+                )
+
+                Surface(
+                    color = Color(0xFFA855F7).copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        text = "CUOTA: ${if (analysis.parlayRealOdds != null) String.format(Locale.US, "@%.2f", analysis.parlayRealOdds) else "@3.85"}",
+                        color = Color(0xFFA855F7),
+                        fontWeight = FontWeight.Black,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            for ((index, leg) in analysis.parlayLegs.take(4).withIndex()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = "${index + 1}. ",
+                            color = Color(0xFF00E5FF),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = "${leg.category}: ${leg.pick}",
+                            fontSize = 11.sp,
+                            color = Color(0xFFF1F5F9),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Text(
+                        text = "${(leg.modelProb * 100).toInt()}% prob",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF94A3B8)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                MetricPill(title = "PROB CONJUNTA", value = "${(analysis.jointParlayProb * 100).toInt()}%", color = Color(0xFF00E5FF))
+                MetricPill(title = "CUOTA MODELO", value = String.format(Locale.US, "%.2f", analysis.parlayFairOdds), color = Color(0xFFA855F7))
+                MetricPill(title = "STAKE RECOMENDADO", value = "${String.format(Locale.US, "%.1f", analysis.kellyStakePercent)}%", color = Color(0xFFF59E0B))
+            }
+        }
+    }
+}
+
+// ==============================================================================
+// 9. MÓDULOS DE ANÁLISIS CON TÍTULOS CORTOS Y LIMPIOS
 // ==============================================================================
 
 @Composable
@@ -2018,7 +2308,7 @@ fun DoubleChanceModuleView(dc: DoubleChanceFavoriteAnalysis) {
                     Text(
                         text = "FAVORITO O EMPATE: ${dc.pickCode}",
                         color = Color(0xFF00E5FF),
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )
@@ -2043,7 +2333,7 @@ fun DoubleChanceModuleView(dc: DoubleChanceFavoriteAnalysis) {
             Text(
                 text = dc.pickTitle,
                 fontWeight = FontWeight.Black,
-                fontSize = 15.sp,
+                fontSize = 14.sp,
                 color = Color(0xFFF8FAFC)
             )
 
@@ -2062,7 +2352,7 @@ fun DoubleChanceModuleView(dc: DoubleChanceFavoriteAnalysis) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                MetricPill(title = "PROBABILIDAD MODELO", value = "${(dc.modelProb * 100).toInt()}%", color = Color(0xFF00E5FF))
+                MetricPill(title = "PROB. MODELO", value = "${(dc.modelProb * 100).toInt()}%", color = Color(0xFF00E5FF))
                 MetricPill(title = "CUOTA JUSTA", value = String.format(Locale.US, "%.2f", dc.fairOdds), color = Color(0xFFA855F7))
                 MetricPill(title = "CUOTA MERCADO", value = if (dc.realOdds != null) String.format(Locale.US, "%.2f", dc.realOdds) else "1.18", color = Color(0xFF10B981))
                 MetricPill(
@@ -2091,13 +2381,13 @@ fun CornersAndCardsModuleView(corners: CornersAnalysis, cards: CardsAnalysis) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "🚩 PROYECCIÓN DE CÓRNERS (TIROS DE ESQUINA)",
+                        text = "🚩 CÓRNERS",
                         fontWeight = FontWeight.Black,
                         fontSize = 11.sp,
                         color = Color(0xFF38BDF8)
                     )
                     Text(
-                        text = "TOTAL: ${String.format(Locale.US, "%.1f", corners.expectedTotal)} CÓRNERS",
+                        text = "${String.format(Locale.US, "%.1f", corners.expectedTotal)} CÓRNERS",
                         fontWeight = FontWeight.Black,
                         fontSize = 11.sp,
                         color = Color(0xFFF8FAFC)
@@ -2111,12 +2401,12 @@ fun CornersAndCardsModuleView(corners: CornersAnalysis, cards: CardsAnalysis) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Desglose λ: Local ~${String.format(Locale.US, "%.1f", corners.expectedHome)} | Visitante ~${String.format(Locale.US, "%.1f", corners.expectedAway)}",
+                        text = "Local ~${String.format(Locale.US, "%.1f", corners.expectedHome)} | Visita ~${String.format(Locale.US, "%.1f", corners.expectedAway)}",
                         fontSize = 10.sp,
                         color = Color(0xFF94A3B8)
                     )
                     Text(
-                        text = "Recomendado: ${corners.recommendedPick}",
+                        text = "Pick: ${corners.recommendedPick}",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF10B981)
@@ -2151,13 +2441,13 @@ fun CornersAndCardsModuleView(corners: CornersAnalysis, cards: CardsAnalysis) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "🟨 PROYECCIÓN DE TARJETAS & DISCIPLINA",
+                        text = "🟨 TARJETAS",
                         fontWeight = FontWeight.Black,
                         fontSize = 11.sp,
                         color = Color(0xFFF59E0B)
                     )
                     Text(
-                        text = "${String.format(Locale.US, "%.1f", cards.expectedTotal)} TARJETAS",
+                        text = "${String.format(Locale.US, "%.1f", cards.expectedTotal)} TOTAL",
                         fontWeight = FontWeight.Black,
                         fontSize = 11.sp,
                         color = Color(0xFFF8FAFC)
@@ -2171,7 +2461,7 @@ fun CornersAndCardsModuleView(corners: CornersAnalysis, cards: CardsAnalysis) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Amarillas esperadas: ~${String.format(Locale.US, "%.1f", cards.expectedYellow)} | P(Roja): ${(cards.expectedRedProb * 100).toInt()}%",
+                        text = "Amarillas ~${String.format(Locale.US, "%.1f", cards.expectedYellow)} | P(Roja): ${(cards.expectedRedProb * 100).toInt()}%",
                         fontSize = 10.sp,
                         color = Color(0xFF94A3B8)
                     )
@@ -2251,102 +2541,18 @@ fun PlayerShotsModuleView(players: List<PlayerShotProp>) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Remates Totales: ~${String.format(Locale.US, "%.1f", p.totalShotsLambda)} (${p.pickTotalShots}: ${(p.probTotalShots * 100).toInt()}%)",
+                            text = "Remates: ~${String.format(Locale.US, "%.1f", p.totalShotsLambda)} (${p.pickTotalShots}: ${(p.probTotalShots * 100).toInt()}%)",
                             fontSize = 10.sp,
                             color = Color(0xFF64748B)
                         )
                         Text(
-                            text = "P(Al Arco): ${(p.probOnTarget * 100).toInt()}% • Cuota Justa: ${String.format(Locale.US, "%.2f", p.fairOddsOnTarget)}",
+                            text = "P(Al Arco): ${(p.probOnTarget * 100).toInt()}% • @${String.format(Locale.US, "%.2f", p.fairOddsOnTarget)}",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF10B981)
                         )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-fun QuantumParlayModuleView(analysis: QuantumMatchAnalysis) {
-    Surface(
-        color = Color(0xFF0A0F1D),
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, Color(0xFFA855F7).copy(alpha = 0.4f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "⚡ TICKET CUÁNTICO MULTI-MERCADO",
-                    fontWeight = FontWeight.Black,
-                    fontSize = 12.sp,
-                    color = Color(0xFFA855F7)
-                )
-
-                Surface(
-                    color = Color(0xFFA855F7).copy(alpha = 0.2f),
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Text(
-                        text = "KELLY: ${String.format(Locale.US, "%.1f", analysis.kellyStakePercent)}% STAKE",
-                        color = Color(0xFFA855F7),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 10.sp,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            for (leg in analysis.parlayLegs) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 3.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(5.dp)
-                                .background(if (leg.isSafePick) Color(0xFF10B981) else Color(0xFF00E5FF), CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "${leg.category}: ${leg.pick}",
-                            fontSize = 11.sp,
-                            color = Color(0xFFE2E8F0),
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    Text(
-                        text = "${(leg.modelProb * 100).toInt()}% • @${String.format(Locale.US, "%.2f", leg.fairOdds)}",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF94A3B8)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                MetricPill(title = "PROB CONJUNTA", value = "${(analysis.jointParlayProb * 100).toInt()}%", color = Color(0xFF00E5FF))
-                MetricPill(title = "CUOTA JUSTA", value = String.format(Locale.US, "%.2f", analysis.parlayFairOdds), color = Color(0xFFA855F7))
-                MetricPill(title = "MERCADO ESTIMADO", value = if (analysis.parlayRealOdds != null) String.format(Locale.US, "%.2f", analysis.parlayRealOdds) else "3.65", color = Color(0xFF10B981))
-                MetricPill(title = "STAKE SEGURO", value = "${String.format(Locale.US, "%.1f", analysis.kellyStakePercent)}%", color = Color(0xFFF59E0B))
             }
         }
     }
@@ -2362,7 +2568,7 @@ fun Poisson1X2ModuleView(analysis: QuantumMatchAnalysis) {
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
-                text = "MATRIZ POISSON 1X2 & MARCADOR EXACTO MÁS PROBABLE",
+                text = "POISSON 1X2 & MARCADOR",
                 fontWeight = FontWeight.Black,
                 fontSize = 11.sp,
                 color = Color(0xFF64748B)
@@ -2377,7 +2583,7 @@ fun Poisson1X2ModuleView(analysis: QuantumMatchAnalysis) {
                 MetricPill(title = "LOCAL (1)", value = "${(analysis.probHome * 100).toInt()}%", color = Color(0xFF00E5FF))
                 MetricPill(title = "EMPATE (X)", value = "${(analysis.probDraw * 100).toInt()}%", color = Color(0xFFF59E0B))
                 MetricPill(title = "VISITA (2)", value = "${(analysis.probAway * 100).toInt()}%", color = Color(0xFFA855F7))
-                MetricPill(title = "MARCADOR EXACTO", value = "${analysis.mostProbableScore} (${(analysis.mostProbableScoreProb * 100).toInt()}%)", color = Color(0xFF10B981))
+                MetricPill(title = "MARCADOR", value = "${analysis.mostProbableScore} (${(analysis.mostProbableScoreProb * 100).toInt()}%)", color = Color(0xFF10B981))
             }
 
             Spacer(modifier = Modifier.height(8.dp))

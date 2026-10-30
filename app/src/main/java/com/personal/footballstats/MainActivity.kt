@@ -21,6 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -60,6 +62,7 @@ val WHITELISTED_LEAGUE_IDS: Set<Long> = setOf(
     32L, // Copa Libertadores
     33L, // Copa Sudamericana
     7L,  // UEFA Champions League
+    8L,  // UEFA Europa League
     1L   // Premier League (Inglaterra)
 )
 
@@ -71,6 +74,7 @@ val LEAGUES_MAP: Map<Long, String> = mapOf(
     5L to "Bundesliga (Alemania)",
     6L to "Ligue 1 (Francia)",
     7L to "UEFA Champions League",
+    8L to "UEFA Europa League",
     9L to "Brasileirão Serie A (Brasil)",
     10L to "Eredivisie (Países Bajos)",
     2L to "Primeira Liga (Portugal)",
@@ -79,25 +83,60 @@ val LEAGUES_MAP: Map<Long, String> = mapOf(
     1L to "Premier League (Inglaterra)"
 )
 
-val PRIORITY_LEAGUE_ORDER = listOf(85L, 18L, 1L, 3L, 4L, 5L, 6L, 9L, 10L, 2L, 7L, 32L, 33L)
+val PRIORITY_LEAGUE_ORDER = listOf(85L, 18L, 1L, 3L, 4L, 5L, 6L, 9L, 10L, 2L, 7L, 8L, 32L, 33L)
 
 fun isWhitelistedLeague(leagueId: Long, leagueName: String = ""): Boolean {
     if (WHITELISTED_LEAGUE_IDS.contains(leagueId)) return true
     val l = leagueName.lowercase(Locale.ROOT).trim()
     if (l.isEmpty()) return false
-    return l.contains("primera nacional") || l.contains("nacional b") ||
-            l.contains("liga profesional") || (l.contains("primera divisi") && l.contains("argentina")) ||
-            l == "mls" || l.contains("major league soccer") ||
-            ((l == "laliga" || l == "la liga" || l.contains("primera división")) && !l.contains("femenina") && !l.contains("segunda")) ||
-            (l.contains("bundesliga") && !l.contains("2.") && !l.contains("austrian")) ||
-            (l.contains("eredivisie") && !l.contains("eerste")) ||
-            (l.contains("ligue 1") && !l.contains("túnez") && !l.contains("ligue 2")) ||
-            (l.contains("serie a") && !l.contains("serie b") && !l.contains("serie c")) ||
-            (l.contains("brasileir") && !l.contains("serie b")) ||
-            ((l.contains("liga portugal") || l.contains("primeira liga")) && !l.contains("liga 2")) ||
-            l.contains("libertadores") || l.contains("sudamericana") ||
-            (l.contains("champions league") && !l.contains("caf")) ||
-            (l.contains("premier league") && !l.contains("nigeria"))
+
+    // Copa Libertadores (múltiples validaciones)
+    if (l.contains("libertadores") || l.contains("conmebol libertadores") || l.contains("copa libertadores")) return true
+
+    // Copa Sudamericana (múltiples validaciones)
+    if (l.contains("sudamericana") || l.contains("conmebol sudamericana") || l.contains("copa sudamericana")) return true
+
+    // Primera Nacional (Nacional B de Argentina)
+    if (l.contains("primera nacional") || l.contains("primera b nacional") || l.contains("nacional b")) return true
+
+    // UEFA Champions League
+    if ((l.contains("champions") || l.contains("uefa champions") || l.contains("champions league")) &&
+        !l.contains("caf") && !l.contains("afc") && !l.contains("u19")) return true
+
+    // UEFA Europa League
+    if (l.contains("europa league") || l.contains("uefa europa") || (l.contains("europa") && !l.contains("conference") && !l.contains("super cup"))) return true
+
+    // Liga Profesional Argentina
+    if (l.contains("liga profesional") || (l.contains("primera divisi") && l.contains("argentina"))) return true
+
+    // MLS (EE.UU.)
+    if (l == "mls" || l.contains("major league soccer")) return true
+
+    // LaLiga (España)
+    if ((l == "laliga" || l == "la liga" || l.contains("primera división")) && !l.contains("femenina") && !l.contains("segunda") && !l.contains("argentina")) return true
+
+    // Bundesliga (Alemania)
+    if (l.contains("bundesliga") && !l.contains("2.") && !l.contains("austrian")) return true
+
+    // Eredivisie (Países Bajos)
+    if (l.contains("eredivisie") && !l.contains("eerste")) return true
+
+    // Ligue 1 (Francia)
+    if (l.contains("ligue 1") && !l.contains("túnez") && !l.contains("ligue 2")) return true
+
+    // Serie A (Italia)
+    if (l.contains("serie a") && !l.contains("serie b") && !l.contains("serie c") && !l.contains("brasil")) return true
+
+    // Brasileirão Serie A (Brasil)
+    if (l.contains("brasileir") && !l.contains("serie b")) return true
+
+    // Primeira Liga (Portugal)
+    if ((l.contains("liga portugal") || l.contains("primeira liga")) && !l.contains("liga 2") && !l.contains("portugal 2")) return true
+
+    // Premier League (Inglaterra)
+    if (l.contains("premier league") && !l.contains("nigeria")) return true
+
+    return false
 }
 
 fun resolveLeagueName(leagueObj: JSONObject?, leagueId: Long): String {
@@ -109,6 +148,7 @@ fun resolveLeagueName(leagueObj: JSONObject?, leagueId: Long): String {
         5L -> return "Bundesliga (Alemania)"
         6L -> return "Ligue 1 (Francia)"
         7L -> return "UEFA Champions League"
+        8L -> return "UEFA Europa League"
         9L -> return "Brasileirão Serie A (Brasil)"
         10L -> return "Eredivisie (Países Bajos)"
         2L -> return "Primeira Liga (Portugal)"
@@ -119,7 +159,11 @@ fun resolveLeagueName(leagueObj: JSONObject?, leagueId: Long): String {
     if (leagueObj != null) {
         val n = leagueObj.optString("name", "").trim()
         val l = n.lowercase(Locale.ROOT)
-        if (l.contains("primera nacional") || l.contains("nacional b")) return "Primera Nacional (Argentina)"
+        if (l.contains("primera nacional") || l.contains("primera b nacional") || l.contains("nacional b")) return "Primera Nacional (Argentina)"
+        if (l.contains("libertadores") || l.contains("conmebol libertadores")) return "Copa Libertadores"
+        if (l.contains("sudamericana") || l.contains("conmebol sudamericana")) return "Copa Sudamericana"
+        if (l.contains("europa league") || l.contains("uefa europa") || l.contains("europa")) return "UEFA Europa League"
+        if (l.contains("champions") || l.contains("uefa champions")) return "UEFA Champions League"
         if (l.contains("liga profesional")) return "Liga Profesional (Argentina)"
         if (l.contains("laliga") || l.contains("la liga")) return "LaLiga (España)"
         if (l.contains("bundesliga")) return "Bundesliga (Alemania)"
@@ -128,9 +172,6 @@ fun resolveLeagueName(leagueObj: JSONObject?, leagueId: Long): String {
         if (l.contains("serie a") && !l.contains("brasil")) return "Serie A (Italia)"
         if (l.contains("brasileir")) return "Brasileirão Serie A (Brasil)"
         if (l.contains("liga portugal") || l.contains("primeira liga")) return "Primeira Liga (Portugal)"
-        if (l.contains("libertadores")) return "Copa Libertadores"
-        if (l.contains("sudamericana")) return "Copa Sudamericana"
-        if (l.contains("champions league")) return "UEFA Champions League"
         if (l.contains("premier league")) return "Premier League (Inglaterra)"
         if (n.isNotEmpty() && !n.contains("#")) return n
     }
@@ -1336,7 +1377,7 @@ fun RecentFormDotsRow(formList: List<MatchFormResult>, label: String) {
             }
             Box(
                 modifier = Modifier
-                    .size(16.dp)
+                    .size(18.dp)
                     .clip(CircleShape)
                     .background(color),
                 contentAlignment = Alignment.Center
@@ -1344,9 +1385,14 @@ fun RecentFormDotsRow(formList: List<MatchFormResult>, label: String) {
                 Text(
                     text = item.charCode,
                     color = Color.Black,
-                    fontSize = 9.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    lineHeight = 10.sp,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        textAlign = TextAlign.Center
+                    )
                 )
             }
         }

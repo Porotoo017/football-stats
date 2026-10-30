@@ -73,19 +73,18 @@ import kotlin.math.round
 
 // ==============================================================================
 // CONFIGURACIÓN DE API BZZOIRO SPORTS DATA
-// Clave y endpoint oficial de Bzzoiro (Modificable):
+// Clave y endpoint oficial de Bzzoiro (Whitelabel / Privado):
 // ==============================================================================
 var bzzoiroApiKey: String = "9665517ed1732bad524c3730e18cd9d90cc1d13f"
 const val BZZOIRO_BASE_URL: String = "https://sports.bzzoiro.com/api/v2"
 
 // ==============================================================================
-// 1. DICCIONARIO OFICIAL DE LIGAS Y TORNEOS (MAPA DE LIGAS)
-// Previene "Liga Internacional #80", "#85", etc. Fallback estricto a "Torneo Internacional"
+// 1. DICCIONARIO OFICIAL DE LIGAS Y PRIORIZACIÓN CUANTITATIVA
 // ==============================================================================
 
 val LEAGUES_MAP: Map<Long, String> = mapOf(
     1L to "Premier League (Inglaterra)",
-    2L to "Liga Portugal Betclic (Portugal)",
+    2L to "Liga Portugal Betclic",
     3L to "LaLiga (España)",
     4L to "Serie A (Italia)",
     5L to "Bundesliga (Alemania)",
@@ -184,9 +183,33 @@ val LEAGUES_MAP: Map<Long, String> = mapOf(
     107L to "Trendyol 1. Lig (Turquía)"
 )
 
+// Orden de jerarquía estricto para los filtros de ligas: Primer nivel mundial primero
+val PRIORITY_LEAGUE_ORDER = listOf(
+    1L,   // Premier League
+    3L,   // LaLiga España
+    4L,   // Serie A Italia
+    5L,   // Bundesliga Alemania
+    6L,   // Ligue 1 Francia
+    7L,   // Champions League
+    8L,   // Europa League
+    83L,  // Conference League
+    32L,  // Copa Libertadores
+    33L,  // Copa Sudamericana
+    85L,  // Liga Profesional Argentina
+    9L,   // Brasileirão Serie A
+    18L,  // MLS EE.UU.
+    19L,  // Liga MX Apertura
+    20L,  // Liga MX Clausura
+    10L,  // Eredivisie Países Bajos
+    2L,   // Liga Portugal
+    17L,  // Saudi Pro League
+    80L,  // Primera A Colombia
+    12L   // Championship Inglaterra
+)
+
 /**
  * Resuelve el nombre real de la liga:
- * 1. Si Bzzoiro provee objeto 'league' con 'name', se utiliza.
+ * 1. Si Bzzoiro provee objeto 'league' con 'name', se utiliza si es válido.
  * 2. Si sólo provee ID o fallback numérico, consulta LEAGUES_MAP.
  * 3. Si no existe en el mapa, retorna "Torneo Internacional" (NUNCA "Liga Internacional #ID").
  */
@@ -334,27 +357,34 @@ data class CardsAnalysis(
     val fairOddsOver35: Double,
     val probOver45: Double,
     val fairOddsOver45: Double,
-    val frictionIndexText: String,
+    val frictionIndex: String,
     val recommendedPick: String,
     val recommendedProb: Double,
     val displayOdds: String
 )
 
-data class RealPlayerShotProp(
-    val playerId: Long,
-    val fullName: String,
+data class PlayerShotProp(
+    val fullName: String,              // Extraído del squad real del equipo
     val teamName: String,
-    val position: String,
+    val rolePosition: String,          // Delantero / Extremo / Atacante
     val totalShotsLambda: Double,
     val shotsOnTargetLambda: Double,
+    val pickTotalShots: String,
+    val probTotalShots: Double,
     val pickOnTarget: String,
     val probOnTarget: Double,
     val fairOddsOnTarget: Double,
-    val pickTotalShots: String,
-    val probTotalShots: Double,
-    val fairOddsTotalShots: Double,
+    val displayOdds: String
+)
+
+data class ParlayLeg(
+    val category: String,
+    val pick: String,
+    val lambda: Double?,
+    val modelProb: Double,
     val displayOdds: String,
-    val isMarketOdds: Boolean
+    val edgePercent: Double?,
+    val isSafePick: Boolean
 )
 
 data class MatchBettingSummary(
@@ -369,16 +399,6 @@ data class MatchBettingSummary(
     val cardsPick: String,
     val predictedScore: String,
     val quickVerdict: String
-)
-
-data class ParlayLeg(
-    val category: String,          // "DOBLE OP", "GOLES", "CÓRNERS", "REMATES"
-    val pick: String,
-    val lambda: Double?,
-    val modelProb: Double,
-    val displayOdds: String,
-    val edgePercent: Double?,
-    val isSafePick: Boolean
 )
 
 data class QuantumMatchAnalysis(
@@ -399,7 +419,7 @@ data class QuantumMatchAnalysis(
     val doubleChanceAnalysis: DoubleChanceFavoriteAnalysis,
     val cornersAnalysis: CornersAnalysis,
     val cardsAnalysis: CardsAnalysis,
-    val playerShotProps: List<RealPlayerShotProp>,
+    val playerShotProps: List<PlayerShotProp>,
     val bettingSummary: MatchBettingSummary,
     val parlayLegs: List<ParlayLeg>,
     val jointParlayProb: Double,
@@ -408,234 +428,279 @@ data class QuantumMatchAnalysis(
 )
 
 // ==============================================================================
-// 3. CLIENTE OFICIAL DE LA API DE BZZOIRO SPORTS DATA
-// Consumo exclusivo de endpoints: /events/, /teams/{id}/squad/, /teams/{id}/form/, /odds/
+// 3. CLIENTE HTTP DE BZZOIRO SPORTS DATA (VALIDACIÓN ESTRICTA Y ASYNC)
 // ==============================================================================
 
 object BzzoiroApiClient {
 
+    // Caché en memoria para evitar llamadas redundantes de planteles y estadísticas
     private val squadCache = mutableMapOf<Long, List<Pair<String, String>>>()
     private val formCache = mutableMapOf<Long, TeamRealFormStats>()
 
     /**
-     * DICCIONARIO VERIFICADO DE ATACANTES REALES POR EQUIPO:
-     * Resuelve el bug de jugadores fantasma. Valida estrictamente pertenencia de club.
-     * Salomón Rondón y Oussama Idrissi juegan en Pachuca.
-     * Adrián Alcaraz juega en Guaraní / Olimpia, NUNCA en Pachuca.
-     * Nicolas Jackson juega en Chelsea, NUNCA en Aston Villa ni Fulham.
+     * Validador de atacantes oficiales por equipo con coincidencia ESTRICTA.
+     * NUNCA usa búsquedas parciales como 'atlético' que puedan cruzar clubes.
+     * Hulk pertenece EXCLUSIVAMENTE a Atlético Mineiro (ID 1045L o nombre explícito 'Atlético Mineiro').
      */
-    private fun getAuthenticTeamAttackers(teamId: Long, teamName: String): List<Pair<String, String>> {
-        val norm = teamName.lowercase(Locale.ROOT)
+    fun getAuthenticTeamAttackers(teamId: Long, teamName: String): List<Pair<String, String>> {
+        val norm = teamName.lowercase(Locale.ROOT).trim()
         return when {
-            // México
-            norm.contains("pachuca") -> listOf(
-                Pair("Salomón Rondón", "Delantero Centro"),
-                Pair("Oussama Idrissi", "Extremo Izquierdo")
+            // Atlético Mineiro (Brasil) - ÚNICO club de Hulk
+            teamId == 1045L || norm == "atlético mineiro" || norm == "atletico mineiro" || norm == "clube atlético mineiro" || norm == "atlético mg" || norm == "atletico mg" -> listOf(
+                Pair("Hulk", "Delantero Centro"),
+                Pair("Paulinho", "Segundo Delantero")
             )
-            norm.contains("tigres") -> listOf(
-                Pair("André-Pierre Gignac", "Delantero Centro"),
-                Pair("Nicolás Ibáñez", "Delantero Centro")
+            // Sevilla FC (España)
+            teamId == 1258L || norm == "sevilla" || norm == "sevilla fc" || norm == "sevilla fútbol club" -> listOf(
+                Pair("Isaac Romero", "Delantero Centro"),
+                Pair("Dodi Lukébakio", "Extremo Ofensivo")
             )
-            norm.contains("américa") || norm.contains("america") -> listOf(
-                Pair("Henry Martín", "Delantero Centro"),
-                Pair("Rodrigo Aguirre", "Delantero Centro")
+            // Real Madrid (España)
+            teamId == 1251L || norm == "real madrid" || norm == "real madrid cf" -> listOf(
+                Pair("Kylian Mbappé", "Delantero Centro"),
+                Pair("Vinícius Jr", "Extremo Izquierdo"),
+                Pair("Rodrygo", "Extremo Derecho")
             )
-            norm.contains("monterrey") || norm.contains("rayados") -> listOf(
-                Pair("Germán Berterame", "Delantero Centro"),
-                Pair("Sergio Canales", "Mediapunta")
-            )
-            norm.contains("chivas") || norm.contains("guadalajara") -> listOf(
-                Pair("Javier Hernández", "Delantero Centro"),
-                Pair("Roberto Alvarado", "Extremo")
-            )
-            norm.contains("cruz azul") -> listOf(
-                Pair("Giorgos Giakoumakis", "Delantero Centro"),
-                Pair("Ángel Sepúlveda", "Delantero Centro")
-            )
-            // Paraguay
-            norm.contains("guaraní") || norm.contains("guarani") -> listOf(
-                Pair("Adrián Alcaraz", "Delantero Centro"),
-                Pair("Walter González", "Delantero Centro")
-            )
-            norm.contains("olimpia") -> listOf(
-                Pair("Derlis González", "Delantero"),
-                Pair("Lucas Pratto", "Delantero Centro")
-            )
-            norm.contains("cerro porteño") || norm.contains("cerro porteno") -> listOf(
-                Pair("Diego Churín", "Delantero Centro"),
-                Pair("Cecilio Domínguez", "Extremo Izquierdo")
-            )
-            norm.contains("libertad") -> listOf(
-                Pair("Óscar Cardozo", "Delantero Centro"),
-                Pair("Roque Santa Cruz", "Delantero Centro")
-            )
-            // Colombia
-            norm.contains("junior") -> listOf(
-                Pair("Carlos Bacca", "Delantero Centro"),
-                Pair("Guillermo Paiva", "Delantero Centro")
-            )
-            norm.contains("santa fe") -> listOf(
-                Pair("Hugo Rodallega", "Delantero Centro"),
-                Pair("Harold Mosquera", "Extremo")
-            )
-            norm.contains("cúcuta") || norm.contains("cucuta") -> listOf(
-                Pair("Jonathan Agudelo", "Delantero Centro"),
-                Pair("Jaime Peralta", "Delantero")
-            )
-            norm.contains("llaneros") -> listOf(
-                Pair("Carlos Cortés", "Delantero Centro"),
-                Pair("Yorleys Mena", "Delantero Centro")
-            )
-            norm.contains("américa de cali") || norm.contains("america de cali") -> listOf(
-                Pair("Adrián Ramos", "Delantero Centro"),
-                Pair("Duván Vergara", "Extremo Izquierdo")
-            )
-            norm.contains("millonarios") -> listOf(
-                Pair("Radamel Falcao", "Delantero Centro"),
-                Pair("Leonardo Castro", "Delantero Centro")
-            )
-            norm.contains("atlético nacional") || norm.contains("atletico nacional") -> listOf(
-                Pair("Alfredo Morelos", "Delantero Centro"),
-                Pair("Kevin Viveros", "Delantero")
-            )
-            // Brasil
-            norm.contains("nautico") || norm.contains("náutico") -> listOf(
-                Pair("Paulo Sérgio", "Delantero Centro"),
-                Pair("Bruno Mezenga", "Delantero Centro")
-            )
-            norm.contains("avai") || norm.contains("avaí") -> listOf(
-                Pair("Léo Gamalho", "Delantero Centro"),
-                Pair("Vágner Love", "Delantero Centro")
-            )
-            norm.contains("flamengo") -> listOf(
-                Pair("Pedro", "Delantero Centro"),
-                Pair("Gabriel Barbosa", "Delantero")
-            )
-            norm.contains("palmeiras") -> listOf(
-                Pair("Flaco López", "Delantero Centro"),
-                Pair("Estêvão", "Extremo Derecho")
-            )
-            norm.contains("botafogo") -> listOf(
-                Pair("Igor Jesus", "Delantero Centro"),
-                Pair("Luiz Henrique", "Extremo Derecho")
-            )
-            norm.contains("vasco") -> listOf(
-                Pair("Pablo Vegetti", "Delantero Centro"),
-                Pair("Dimitri Payet", "Mediapunta")
-            )
-            norm.contains("atletico mineiro") || norm.contains("atlético mineiro") -> listOf(
-                Pair("Hulk", "Delantero"),
-                Pair("Paulinho", "Extremo Izquierdo")
-            )
-            norm.contains("cruzeiro") -> listOf(
-                Pair("Kaio Jorge", "Delantero Centro"),
-                Pair("Gabriel Veron", "Extremo")
-            )
-            // Argentina
-            norm.contains("boca") -> listOf(
-                Pair("Edinson Cavani", "Delantero Centro"),
-                Pair("Miguel Merentiel", "Delantero Centro")
-            )
-            norm.contains("river") -> listOf(
-                Pair("Miguel Borja", "Delantero Centro"),
-                Pair("Facundo Colidio", "Delantero")
-            )
-            norm.contains("racing") -> listOf(
-                Pair("Adrián Martínez", "Delantero Centro"),
-                Pair("Maximiliano Salas", "Delantero")
-            )
-            norm.contains("independiente") -> listOf(
-                Pair("Gabriel Ávalos", "Delantero Centro"),
-                Pair("Santiago Montiel", "Extremo")
-            )
-            norm.contains("san lorenzo") -> listOf(
-                Pair("Alexis Cuello", "Delantero"),
-                Pair("Iker Muniain", "Mediapunta")
-            )
-            norm.contains("vélez") || norm.contains("velez") -> listOf(
-                Pair("Braian Romero", "Delantero Centro"),
-                Pair("Claudio Aquino", "Mediapunta")
-            )
-            norm.contains("huracán") || norm.contains("huracan") -> listOf(
-                Pair("Eric Ramírez", "Delantero Centro"),
-                Pair("Rodrigo Cabral", "Extremo")
-            )
-            norm.contains("talleres") -> listOf(
-                Pair("Federico Girotti", "Delantero Centro"),
-                Pair("Ramón Sosa", "Extremo")
-            )
-            norm.contains("estudiantes") -> listOf(
-                Pair("Guido Carrillo", "Delantero Centro"),
-                Pair("Edwuin Cetré", "Extremo")
-            )
-            norm.contains("lanús") || norm.contains("lanus") -> listOf(
-                Pair("Walter Bou", "Delantero Centro"),
-                Pair("Marcelino Moreno", "Mediapunta")
-            )
-            // Inglaterra
-            norm.contains("aston villa") -> listOf(
-                Pair("Ollie Watkins", "Delantero Centro"),
-                Pair("Jhon Durán", "Delantero Centro")
-            )
-            norm.contains("fulham") -> listOf(
-                Pair("Raúl Jiménez", "Delantero Centro"),
-                Pair("Rodrigo Muniz", "Delantero Centro")
-            )
-            norm.contains("chelsea") -> listOf(
-                Pair("Nicolas Jackson", "Delantero Centro"),
-                Pair("Cole Palmer", "Mediapunta")
-            )
-            norm.contains("liverpool") -> listOf(
-                Pair("Mohamed Salah", "Extremo Derecho"),
-                Pair("Darwin Núñez", "Delantero Centro")
-            )
-            norm.contains("arsenal") -> listOf(
-                Pair("Bukayo Saka", "Extremo Derecho"),
-                Pair("Kai Havertz", "Delantero Centro")
-            )
-            norm.contains("manchester city") -> listOf(
-                Pair("Erling Haaland", "Delantero Centro"),
-                Pair("Phil Foden", "Mediapunta")
-            )
-            // España
-            norm.contains("real madrid") -> listOf(
-                Pair("Kylian Mbappé", "Delantero"),
-                Pair("Vinícius Júnior", "Extremo Izquierdo")
-            )
-            norm.contains("barcelona") -> listOf(
+            // Barcelona (España)
+            teamId == 1255L || norm == "barcelona" || norm == "fc barcelona" -> listOf(
                 Pair("Robert Lewandowski", "Delantero Centro"),
                 Pair("Lamine Yamal", "Extremo Derecho"),
                 Pair("Raphinha", "Extremo Izquierdo")
             )
-            norm.contains("atlético") || norm.contains("atletico de madrid") -> listOf(
+            // Atlético Madrid (España) - Validación estricta, NO coincide con Mineiro
+            teamId == 1252L || norm == "atlético madrid" || norm == "atletico madrid" || norm == "club atlético de madrid" || norm == "atletico de madrid" -> listOf(
                 Pair("Julián Álvarez", "Delantero Centro"),
-                Pair("Antoine Griezmann", "Segunda Punta")
+                Pair("Antoine Griezmann", "Mediapunta / Atacante"),
+                Pair("Alexander Sørloth", "Delantero Centro")
             )
-            norm.contains("valladolid") -> listOf(
-                Pair("Mamadou Sylla", "Delantero Centro"),
-                Pair("Raúl Moro", "Extremo")
+            // Manchester City (Inglaterra)
+            teamId == 12L || norm == "manchester city" || norm == "man city" -> listOf(
+                Pair("Erling Haaland", "Delantero Centro"),
+                Pair("Phil Foden", "Extremo Ofensivo"),
+                Pair("Bernardo Silva", "Atacante")
             )
-            norm.contains("las palmas") -> listOf(
-                Pair("Sandro Ramírez", "Delantero"),
-                Pair("Fábio Silva", "Delantero Centro")
+            // Liverpool (Inglaterra)
+            teamId == 1L || norm == "liverpool" || norm == "liverpool fc" -> listOf(
+                Pair("Mohamed Salah", "Extremo Derecho"),
+                Pair("Luis Díaz", "Extremo Izquierdo"),
+                Pair("Darwin Núñez", "Delantero Centro")
             )
-            // Portugal / Francia
-            norm.contains("porto") || teamId == 35L -> listOf(
+            // Arsenal (Inglaterra)
+            teamId == 2L || norm == "arsenal" || norm == "arsenal fc" -> listOf(
+                Pair("Bukayo Saka", "Extremo Derecho"),
+                Pair("Kai Havertz", "Delantero Centro"),
+                Pair("Gabriel Martinelli", "Extremo Izquierdo")
+            )
+            // Chelsea (Inglaterra) - Único club de Nicolas Jackson y Cole Palmer
+            teamId == 13L || norm == "chelsea" || norm == "chelsea fc" -> listOf(
+                Pair("Cole Palmer", "Mediapunta / Ofensivo"),
+                Pair("Nicolas Jackson", "Delantero Centro"),
+                Pair("Christopher Nkunku", "Segundo Delantero")
+            )
+            // Aston Villa (Inglaterra)
+            teamId == 3L || norm == "aston villa" -> listOf(
+                Pair("Ollie Watkins", "Delantero Centro"),
+                Pair("Morgan Rogers", "Mediapunta / Atacante"),
+                Pair("Leon Bailey", "Extremo Ofensivo")
+            )
+            // Fulham (Inglaterra)
+            teamId == 6L || norm == "fulham" || norm == "fulham fc" -> listOf(
+                Pair("Rodrigo Muniz", "Delantero Centro"),
+                Pair("Raúl Jiménez", "Delantero Centro"),
+                Pair("Alex Iwobi", "Extremo Ofensivo")
+            )
+            // Tottenham (Inglaterra)
+            teamId == 9L || norm == "tottenham" || norm == "tottenham hotspur" || norm == "spurs" -> listOf(
+                Pair("Son Heung-min", "Extremo / Delantero"),
+                Pair("Dominic Solanke", "Delantero Centro")
+            )
+            // Manchester United (Inglaterra)
+            teamId == 17L || norm == "manchester united" || norm == "man utd" -> listOf(
+                Pair("Rasmus Højlund", "Delantero Centro"),
+                Pair("Marcus Rashford", "Extremo Ofensivo"),
+                Pair("Alejandro Garnacho", "Extremo")
+            )
+            // Newcastle (Inglaterra)
+            teamId == 4L || norm == "newcastle" || norm == "newcastle united" -> listOf(
+                Pair("Alexander Isak", "Delantero Centro"),
+                Pair("Anthony Gordon", "Extremo Ofensivo")
+            )
+            // Bayern Munich (Alemania)
+            norm == "bayern münchen" || norm == "bayern munich" || norm == "bayern" -> listOf(
+                Pair("Harry Kane", "Delantero Centro"),
+                Pair("Jamal Musiala", "Mediapunta"),
+                Pair("Michael Olise", "Extremo")
+            )
+            // Borussia Dortmund (Alemania)
+            norm == "borussia dortmund" || norm == "dortmund" -> listOf(
+                Pair("Serhou Guirassy", "Delantero Centro"),
+                Pair("Julian Brandt", "Mediapunta")
+            )
+            // Inter de Milán (Italia)
+            norm == "inter" || norm == "internazionale" || norm == "inter milan" -> listOf(
+                Pair("Lautaro Martínez", "Delantero Centro"),
+                Pair("Marcus Thuram", "Delantero Centro")
+            )
+            // Juventus (Italia)
+            norm == "juventus" || norm == "juventus fc" -> listOf(
+                Pair("Dušan Vlahović", "Delantero Centro"),
+                Pair("Kenan Yildiz", "Extremo Ofensivo")
+            )
+            // AC Milan (Italia)
+            norm == "ac milan" || norm == "milan" -> listOf(
+                Pair("Álvaro Morata", "Delantero Centro"),
+                Pair("Rafael Leão", "Extremo Izquierdo")
+            )
+            // Paris Saint-Germain (Francia)
+            norm == "paris saint-germain" || norm == "psg" -> listOf(
+                Pair("Ousmane Dembélé", "Extremo"),
+                Pair("Bradley Barcola", "Extremo"),
+                Pair("Gonçalo Ramos", "Delantero Centro")
+            )
+            // River Plate (Argentina)
+            teamId == 2085L || norm == "river plate" || norm == "river" -> listOf(
+                Pair("Miguel Borja", "Delantero Centro"),
+                Pair("Facundo Colidio", "Segundo Delantero")
+            )
+            // Boca Juniors (Argentina)
+            teamId == 2086L || norm == "boca juniors" || norm == "boca" -> listOf(
+                Pair("Edinson Cavani", "Delantero Centro"),
+                Pair("Miguel Merentiel", "Delantero Centro")
+            )
+            // Racing Club (Argentina)
+            norm == "racing club" || norm == "racing" -> listOf(
+                Pair("Adrián Martínez", "Delantero Centro"),
+                Pair("Roger Martínez", "Delantero")
+            )
+            // Vélez Sarsfield (Argentina)
+            norm == "vélez sarsfield" || norm == "velez sarsfield" || norm == "vélez" || norm == "velez" -> listOf(
+                Pair("Braian Romero", "Delantero Centro"),
+                Pair("Francisco Pizzini", "Extremo")
+            )
+            // San Lorenzo (Argentina)
+            norm == "san lorenzo" || norm == "san lorenzo de almagro" -> listOf(
+                Pair("Alexis Cuello", "Delantero Centro"),
+                Pair("Iker Muniain", "Mediapunta Ofensivo")
+            )
+            // Estudiantes de La Plata (Argentina)
+            norm == "estudiantes" || norm == "estudiantes de la plata" || norm == "estudiantes lp" -> listOf(
+                Pair("Guido Carrillo", "Delantero Centro"),
+                Pair("Edwuin Cetré", "Extremo Ofensivo")
+            )
+            // Independiente Rivadavia (Argentina)
+            norm == "independiente rivadavia" -> listOf(
+                Pair("Sebastián Villa", "Extremo Ofensivo"),
+                Pair("Victorio Ramis", "Delantero Centro")
+            )
+            // Huracán (Argentina)
+            norm == "huracán" || norm == "huracan" -> listOf(
+                Pair("Ramón Ábila", "Delantero Centro"),
+                Pair("Walter Mazzantti", "Extremo")
+            )
+            // Tigre (Argentina)
+            norm == "tigre" || norm == "club atlético tigre" -> listOf(
+                Pair("Florián Monzón", "Delantero Centro"),
+                Pair("Blas Armoa", "Extremo")
+            )
+            // Inter Miami (EE.UU.)
+            norm == "inter miami" || norm == "inter miami cf" -> listOf(
+                Pair("Lionel Messi", "Atacante Libre"),
+                Pair("Luis Suárez", "Delantero Centro")
+            )
+            // Pachuca (México)
+            norm == "pachuca" || norm == "tuzos" || norm == "cf pachuca" -> listOf(
+                Pair("Salomón Rondón", "Delantero Centro"),
+                Pair("Oussama Idrissi", "Extremo Ofensivo"),
+                Pair("Nelson Deossa", "Mediapunta Ofensivo")
+            )
+            // Guaraní (Paraguay) - Club real de Adrián Alcaraz
+            norm == "guaraní" || norm == "guarani" || norm == "club guaraní" -> listOf(
+                Pair("Adrián Alcaraz", "Delantero Centro"),
+                Pair("Walter González", "Delantero Centro")
+            )
+            // Tigres UANL (México)
+            norm == "tigres" || norm == "tigres uanl" -> listOf(
+                Pair("André-Pierre Gignac", "Delantero Centro"),
+                Pair("Nicolás Ibáñez", "Delantero Centro")
+            )
+            // Club América (México)
+            norm == "club américa" || norm == "club america" || norm == "américa" || norm == "america" -> listOf(
+                Pair("Henry Martín", "Delantero Centro"),
+                Pair("Rodrigo Aguirre", "Delantero Centro")
+            )
+            // Monterrey Rayados (México)
+            norm == "monterrey" || norm == "rayados" || norm == "cf monterrey" -> listOf(
+                Pair("Germán Berterame", "Delantero Centro"),
+                Pair("Sergio Canales", "Mediapunta")
+            )
+            // Chivas Guadalajara (México)
+            norm == "chivas" || norm == "guadalajara" || norm == "cd guadalajara" -> listOf(
+                Pair("Javier Hernández", "Delantero Centro"),
+                Pair("Roberto Alvarado", "Extremo")
+            )
+            // Cruz Azul (México)
+            norm == "cruz azul" -> listOf(
+                Pair("Giorgos Giakoumakis", "Delantero Centro"),
+                Pair("Ángel Sepúlveda", "Delantero Centro")
+            )
+            // Junior de Barranquilla (Colombia)
+            norm == "junior" || norm == "junior fc" || norm == "junior de barranquilla" -> listOf(
+                Pair("Carlos Bacca", "Delantero Centro"),
+                Pair("Guillermo Paiva", "Delantero Centro")
+            )
+            // Santa Fe (Colombia)
+            norm == "santa fe" || norm == "independiente santa fe" -> listOf(
+                Pair("Hugo Rodallega", "Delantero Centro"),
+                Pair("Harold Mosquera", "Extremo")
+            )
+            // Llaneros (Colombia)
+            norm == "llaneros" || norm == "club llaneros" -> listOf(
+                Pair("Carlos Cortés", "Delantero Centro"),
+                Pair("Yorleys Mena", "Delantero Centro")
+            )
+            // Náutico (Brasil)
+            norm == "nautico" || norm == "náutico" || norm == "clube náutico capibaribe" -> listOf(
+                Pair("Paulo Sérgio", "Delantero Centro"),
+                Pair("Bruno Mezenga", "Delantero Centro")
+            )
+            // Avaí (Brasil)
+            norm == "avai" || norm == "avaí" || norm == "avaí fc" -> listOf(
+                Pair("Léo Gamalho", "Delantero Centro"),
+                Pair("Vágner Love", "Delantero Centro")
+            )
+            // Porto (Portugal)
+            teamId == 35L || norm == "porto" || norm == "fc porto" -> listOf(
                 Pair("Samu Omorodion", "Delantero Centro"),
                 Pair("Galeno", "Extremo Izquierdo"),
                 Pair("Pepê", "Extremo Derecho")
             )
-            norm.contains("moreirense") || teamId == 29L -> listOf(
-                Pair("Luis Asué", "Delantero Centro"),
-                Pair("Madson", "Extremo Ofensivo")
-            )
-            norm.contains("benfica") -> listOf(
-                Pair("Vangelis Pavlidis", "Delantero Centro"),
-                Pair("Ángel Di María", "Extremo Derecho")
-            )
-            norm.contains("sporting") -> listOf(
+            // Sporting CP (Portugal)
+            norm == "sporting cp" || norm == "sporting lisboa" || norm == "sporting" -> listOf(
                 Pair("Viktor Gyökeres", "Delantero Centro"),
                 Pair("Francisco Trincão", "Extremo")
+            )
+            // Benfica (Portugal)
+            norm == "benfica" || norm == "sl benfica" -> listOf(
+                Pair("Vangelis Pavlidis", "Delantero Centro"),
+                Pair("Ángel Di María", "Extremo")
+            )
+            // Real Valladolid (España)
+            teamId == 1263L || norm == "valladolid" || norm == "real valladolid" -> listOf(
+                Pair("Marcos André", "Delantero Centro"),
+                Pair("Mamadou Sylla", "Delantero Centro"),
+                Pair("Raúl Moro", "Extremo Ofensivo")
+            )
+            // UD Las Palmas (España)
+            teamId == 1266L || norm == "las palmas" || norm == "ud las palmas" -> listOf(
+                Pair("Sandro Ramírez", "Delantero Centro"),
+                Pair("Fábio Silva", "Delantero Centro"),
+                Pair("Alberto Moleiro", "Mediapunta")
+            )
+            // Real Betis (España)
+            norm == "betis" || norm == "real betis" || norm == "real betis balompié" -> listOf(
+                Pair("Vitor Roque", "Delantero Centro"),
+                Pair("Chimy Ávila", "Extremo / Delantero"),
+                Pair("Ez Abde", "Extremo")
             )
             else -> emptyList()
         }
@@ -710,7 +775,10 @@ object BzzoiroApiClient {
 
     /**
      * Consulta el plantel oficial de Bzzoiro (/teams/{team_id}/squad/)
-     * Retorna delanteros y atacantes reales del equipo validando estrictamente pertenencia
+     * Validación estricta anti-alucinaciones:
+     * - Verifica team_id de retorno de Bzzoiro.
+     * - Descarta cruzamiento de atacantes reconocidos (Hulk sólo en Mineiro, Jackson sólo en Chelsea, etc.).
+     * - Si no se halla nombre real para este equipo, usa rol descriptivo de su propio club: 'Delantero ($teamName)'.
      */
     suspend fun fetchTeamSquad(teamId: Long, teamName: String): List<Pair<String, String>> =
         withContext(Dispatchers.IO) {
@@ -725,53 +793,61 @@ object BzzoiroApiClient {
 
             val attackers = mutableListOf<Pair<String, String>>()
             val normTeam = teamName.lowercase(Locale.ROOT)
+            val isMineiro = teamId == 1045L || normTeam.contains("mineiro")
+            val isChelsea = teamId == 13L || normTeam.contains("chelsea")
+            val isGuarani = normTeam.contains("guaraní") || normTeam.contains("guarani")
+
             try {
                 val conn = openConnection("/teams/$teamId/squad/")
                 if (conn.responseCode == 200) {
                     val root = JSONObject(readResponse(conn))
-                    val playersArr = root.optJSONArray("players") ?: JSONArray()
-                    val forwards = mutableListOf<String>()
-                    val midfielders = mutableListOf<String>()
+                    val returnedTeamId = root.optLong("team_id", 0L)
 
-                    for (i in 0 until playersArr.length()) {
-                        val p = playersArr.getJSONObject(i)
-                        val name = p.optString("name", "").trim()
-                        val pos = p.optString("position", "").uppercase().trim()
-                        val avail = p.optString("availability", "available").lowercase()
+                    // Validación de seguridad: el ID del squad debe coincidir con el solicitado
+                    if (returnedTeamId == 0L || returnedTeamId == teamId) {
+                        val playersArr = root.optJSONArray("players") ?: JSONArray()
+                        val forwards = mutableListOf<String>()
+                        val midfielders = mutableListOf<String>()
 
-                        // Descartar lesionados o suspendidos si hay otros disponibles
-                        if (avail.contains("injured") || avail.contains("suspended")) continue
+                        for (i in 0 until playersArr.length()) {
+                            val p = playersArr.getJSONObject(i)
+                            val name = p.optString("name", "").trim()
+                            val pos = p.optString("position", "").uppercase().trim()
+                            val avail = p.optString("availability", "available").lowercase()
+                            val pTeamId = if (p.has("team_id") && !p.isNull("team_id")) p.optLong("team_id") else 0L
 
-                        // FILTROS ESTRICTOS ANTI-JUGADORES FANTASMA:
-                        // 1. Adrián Alcaraz sólo pertenece a Guaraní / Olimpia, NUNCA a Pachuca ni otros clubes
-                        if (name.contains("Alcaraz", ignoreCase = true) && !normTeam.contains("guaraní") && !normTeam.contains("guarani")) {
-                            continue
-                        }
-                        // 2. Nicolas Jackson pertenece a Chelsea
-                        if (name.equals("Nicolas Jackson", ignoreCase = true) && !normTeam.contains("chelsea")) {
-                            continue
-                        }
-                        // 3. Descartar jugadores fantasma reportados
-                        if (name.contains("Mateo Silveira", ignoreCase = true)) {
-                            continue
-                        }
+                            // Descartar si el jugador tiene asignado otro team_id diferente
+                            if (pTeamId != 0L && pTeamId != teamId) continue
 
-                        if (name.isNotEmpty()) {
-                            if (pos == "F" || pos == "A" || pos.contains("ATTACK") || pos.contains("FORWARD")) {
-                                forwards.add(name)
-                            } else if (pos == "M" || pos.contains("MIDFIELD")) {
-                                midfielders.add(name)
+                            // Descartar lesionados o suspendidos si hay otros disponibles
+                            if (avail.contains("injured") || avail.contains("suspended")) continue
+
+                            // REGLAS ESTRICTAS DE CONTROL DE ALUCINACIONES:
+                            // 1. Hulk pertenece ÚNICAMENTE a Atlético Mineiro
+                            if (name.contains("Hulk", ignoreCase = true) && !isMineiro) continue
+                            // 2. Nicolas Jackson pertenece ÚNICAMENTE a Chelsea
+                            if (name.contains("Nicolas Jackson", ignoreCase = true) && !isChelsea) continue
+                            // 3. Adrián Alcaraz pertenece a Guaraní
+                            if (name.contains("Alcaraz", ignoreCase = true) && !isGuarani) continue
+                            // 4. Mateo Silveira (placeholder inexistente)
+                            if (name.contains("Mateo Silveira", ignoreCase = true)) continue
+
+                            if (name.isNotEmpty()) {
+                                if (pos == "F" || pos == "A" || pos.contains("ATTACK") || pos.contains("FORWARD") || pos.contains("STRIKER")) {
+                                    forwards.add(name)
+                                } else if (pos == "M" || pos.contains("MIDFIELD")) {
+                                    midfielders.add(name)
+                                }
                             }
                         }
-                    }
 
-                    // Seleccionar atacantes principales del equipo
-                    for (f in forwards.take(2)) {
-                        attackers.add(Pair(f, "Delantero Centro"))
-                    }
-                    if (attackers.size < 2) {
-                        for (m in midfielders.take(2 - attackers.size)) {
-                            attackers.add(Pair(m, "Mediapunta / Ofensivo"))
+                        for (f in forwards.take(2)) {
+                            attackers.add(Pair(f, "Delantero Centro"))
+                        }
+                        if (attackers.size < 2) {
+                            for (m in midfielders.take(2 - attackers.size)) {
+                                attackers.add(Pair(m, "Mediapunta / Atacante"))
+                            }
                         }
                     }
                 }
@@ -780,10 +856,10 @@ object BzzoiroApiClient {
                 e.printStackTrace()
             }
 
-            // Si Bzzoiro no tiene squad registrado para este ID, usamos rol descriptivo de su propio equipo
+            // Fallback honesto y matemático: Si no hay squad verificado, usar descripción de su propio equipo
             if (attackers.isEmpty()) {
-                attackers.add(Pair("Delantero Centro ($teamName)", "Delantero Centro"))
-                attackers.add(Pair("Extremo Ofensivo ($teamName)", "Extremo"))
+                attackers.add(Pair("Delantero ($teamName)", "Delantero Centro"))
+                attackers.add(Pair("Extremo ($teamName)", "Extremo Ofensivo"))
             }
 
             squadCache[teamId] = attackers
@@ -801,8 +877,8 @@ object BzzoiroApiClient {
                 teamId = teamId,
                 teamName = teamName,
                 matchesPlayed = 10,
-                avgGoalsScored = 1.40,
-                avgGoalsConceded = 1.20,
+                avgGoalsScored = 1.35,
+                avgGoalsConceded = 1.25,
                 avgCorners = 4.8,
                 avgYellowCards = 2.4,
                 avgTotalShots = 13.0,
@@ -845,12 +921,12 @@ object BzzoiroApiClient {
                             teamId = teamId,
                             teamName = teamName,
                             matchesPlayed = mCount,
-                            avgGoalsScored = (gf / mCount).coerceIn(0.5, 3.8),
-                            avgGoalsConceded = (ga / mCount).coerceIn(0.5, 3.8),
-                            avgCorners = corn.coerceIn(2.5, 9.0),
+                            avgGoalsScored = (gf / mCount).coerceIn(0.40, 3.80),
+                            avgGoalsConceded = (ga / mCount).coerceIn(0.40, 3.80),
+                            avgCorners = corn.coerceIn(2.5, 9.5),
                             avgYellowCards = yel.coerceIn(1.0, 6.0),
                             avgTotalShots = totShots.coerceIn(7.0, 22.0),
-                            avgShotsOnTarget = sot.coerceIn(2.0, 9.0),
+                            avgShotsOnTarget = sot.coerceIn(2.0, 9.5),
                             formString = fStr
                         )
                     }
@@ -909,19 +985,27 @@ object BzzoiroApiClient {
                             else if (out == "AWAY" || out == "2") away1x2 = decOdds
                         }
                         "double_chance" -> {
-                            if (out == "1X" || outName.contains("1X", ignoreCase = true)) dc1X = decOdds
-                            else if (out == "X2" || outName.contains("X2", ignoreCase = true)) dcX2 = decOdds
-                            else if (out == "12" || outName.contains("12", ignoreCase = true)) dc12 = decOdds
+                            if (out == "1X" || outName.contains("Home or Draw", ignoreCase = true)) dc1X = decOdds
+                            else if (out == "X2" || outName.contains("Draw or Away", ignoreCase = true)) dcX2 = decOdds
+                            else if (out == "12" || outName.contains("Home or Away", ignoreCase = true)) dc12 = decOdds
                         }
-                        "total_goals" -> {
-                            val line = oddObj.optDouble("line", 2.5)
-                            if (abs(line - 1.5) < 0.1) {
+                        "over_under_15" -> {
+                            val line = oddObj.optDouble("line", 1.5)
+                            if (abs(line - 1.5) < 0.2) {
                                 if (out == "OVER" || outName.contains("Over", ignoreCase = true)) o15 = decOdds
                                 else if (out == "UNDER" || outName.contains("Under", ignoreCase = true)) u15 = decOdds
-                            } else if (abs(line - 2.5) < 0.1) {
+                            }
+                        }
+                        "over_under_25" -> {
+                            val line = oddObj.optDouble("line", 2.5)
+                            if (abs(line - 2.5) < 0.2) {
                                 if (out == "OVER" || outName.contains("Over", ignoreCase = true)) o25 = decOdds
                                 else if (out == "UNDER" || outName.contains("Under", ignoreCase = true)) u25 = decOdds
-                            } else if (abs(line - 3.5) < 0.1) {
+                            }
+                        }
+                        "over_under_35" -> {
+                            val line = oddObj.optDouble("line", 3.5)
+                            if (abs(line - 3.5) < 0.2) {
                                 if (out == "OVER" || outName.contains("Over", ignoreCase = true)) o35 = decOdds
                                 else if (out == "UNDER" || outName.contains("Under", ignoreCase = true)) u35 = decOdds
                             }
@@ -993,7 +1077,7 @@ object BzzoiroApiClient {
             .map { extractSafeString(obj, it) }
             .firstOrNull { it.isNotBlank() } ?: ""
 
-        // 2. Parseo y conversión estricta a zona horaria local del dispositivo (ej: '2024-10-31T22:00:00Z')
+        // 2. Parseo y conversión estricta a zona horaria local del dispositivo
         val matchLocal = parseIsoDate(eventDateRaw)
         val matchLocalLdt = matchLocal?.toLocalDateTime()
 
@@ -1083,10 +1167,11 @@ object BzzoiroApiClient {
 
     /**
      * Consulta eventos de Bzzoiro cubriendo hoy y los próximos días.
-     * Garantiza una oferta real de partidos para las próximas 24 horas y partidos posteriores para 'TODOS',
-     * ordenados cronológicamente de forma ascendente.
+     * Carga masiva sin límites artificiales (limit=100 por día) para que
+     * TODAS las ligas (Liga Profesional Argentina, MLS, Premier, LaLiga)
+     * muestren el 100% de sus partidos reales programados.
      */
-    suspend fun fetchUpcomingEvents(daysAhead: Int = 4, limitPerDay: Int = 12): List<ApexEvent> =
+    suspend fun fetchUpcomingEvents(daysAhead: Int = 3, limitPerDay: Int = 100): List<ApexEvent> =
         withContext(Dispatchers.IO) {
             val list = mutableListOf<ApexEvent>()
             val seenIds = mutableSetOf<Long>()
@@ -1094,7 +1179,7 @@ object BzzoiroApiClient {
             val nowLocalLdt = LocalDateTime.now()
             val limit24h = nowLocalLdt.plusHours(24)
 
-            // Consultar día por día para obtener eventos distribuidos y evitar sesgos de paginación
+            // Iterar por cada día para traer todos los eventos sin sesgo de paginación
             for (dayOffset in 0 until daysAhead) {
                 val dStr = nowUtc.plusDays(dayOffset.toLong()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US))
                 try {
@@ -1119,7 +1204,7 @@ object BzzoiroApiClient {
             // Fallback preventivo si no hubo partidos en las fechas consultadas
             if (list.size < 5) {
                 try {
-                    val conn = openConnection("/events/?limit=30")
+                    val conn = openConnection("/events/?limit=100")
                     if (conn.responseCode == 200) {
                         val root = JSONObject(readResponse(conn))
                         val results = root.optJSONArray("results") ?: JSONArray()
@@ -1147,7 +1232,7 @@ object BzzoiroApiClient {
     /**
      * Consulta tradicional de eventos con rango de fechas y parseo ISO 8601 estricto
      */
-    suspend fun fetchEvents(dateFrom: String, dateTo: String, limit: Int = 30): List<ApexEvent> =
+    suspend fun fetchEvents(dateFrom: String, dateTo: String, limit: Int = 100): List<ApexEvent> =
         withContext(Dispatchers.IO) {
             val list = mutableListOf<ApexEvent>()
             val nowLocalLdt = LocalDateTime.now()
@@ -1181,19 +1266,50 @@ object BzzoiroApiClient {
 
 object QuantumMathEngine {
 
-    fun factorial(n: Int): Double {
+    private fun factorial(k: Int): Double {
         var res = 1.0
-        for (i in 2..n) res *= i.toDouble()
+        for (i in 2..k) res *= i
         return res
     }
 
     fun poissonPmf(k: Int, lambda: Double): Double {
         if (lambda <= 0.0) return if (k == 0) 1.0 else 0.0
-        return (lambda.pow(k) * exp(-lambda)) / factorial(k)
+        return (lambda.pow(k.toDouble()) * exp(-lambda)) / factorial(k)
+    }
+
+    fun poissonCdf(k: Int, lambda: Double): Double {
+        var sum = 0.0
+        for (i in 0..k) sum += poissonPmf(i, lambda)
+        return sum.coerceIn(0.0, 1.0)
     }
 
     /**
-     * Resuelve Doble Oportunidad Favorito (1X o X2) usando probabilidades y cuotas reales de Bzzoiro
+     * Convierte el string de forma de Bzzoiro (ej: "WWLDW") en badges coloreados
+     */
+    fun parseFormStringToBadges(formStr: String): List<MatchFormResult> {
+        val list = mutableListOf<MatchFormResult>()
+        val chars = formStr.uppercase().reversed().take(5)
+        for (c in chars) {
+            when (c) {
+                'W' -> list.add(MatchFormResult("V", FormOutcome.WIN, "Oficial", "Victoria"))
+                'D' -> list.add(MatchFormResult("E", FormOutcome.DRAW, "Oficial", "Empate"))
+                'L' -> list.add(MatchFormResult("D", FormOutcome.LOSS, "Oficial", "Derrota"))
+            }
+        }
+        while (list.size < 5) {
+            list.add(MatchFormResult("E", FormOutcome.DRAW, "Oficial", "Empate"))
+        }
+        return list.take(5)
+    }
+
+    /**
+     * CÁLCULO RIGUROSO DEL FAVORITO Y DOBLE OPORTUNIDAD:
+     * El favorito NUNCA se elige al azar ni por sesgo local rígido.
+     * Se basa estrictamente en la probabilidad de victoria calculada por Poisson (o cuota de mercado):
+     * - Si P(Local) >= P(Visitante), el favorito es el Local y el pick es 1X.
+     * - Si P(Visitante) > P(Local) (ejemplo Sevilla jugando de visita), el favorito es Sevilla y el pick es X2.
+     * - La probabilidad de Doble Op es P(Ganar) + P(Empatar).
+     * - La cuota justa es 1.0 / (P(Ganar) + P(Empatar)).
      */
     fun analyzeDoubleChanceFavorite(
         homeTeam: String,
@@ -1203,39 +1319,38 @@ object QuantumMathEngine {
         pAway: Double,
         odds: RealOdds
     ): DoubleChanceFavoriteAnalysis {
+        // Determinación matemática rigurosa del favorito indiscutible
         val isHomeFav = pHome >= pAway
         val favTeam = if (isHomeFav) homeTeam else awayTeam
         val dogTeam = if (isHomeFav) awayTeam else homeTeam
-
         val pickCode = if (isHomeFav) "1X" else "X2"
-        val pickTitle = if (isHomeFav) "$favTeam o Empate (1X)" else "$favTeam o Empate (X2)"
+        val pickTitle = "$favTeam o Empate ($pickCode)"
 
-        val modelProb = (if (isHomeFav) pHome + pDraw else pAway + pDraw).coerceIn(0.10, 0.98)
-        val fairOdds = 1.0 / modelProb
+        val modelP = (if (isHomeFav) (pHome + pDraw) else (pAway + pDraw)).coerceIn(0.10, 0.98)
+        val fairO = (1.0 / modelP).coerceIn(1.02, 25.0)
 
-        val marketOdds = if (isHomeFav) odds.dc1X else odds.dcX2
-        val hasMarket = marketOdds != null && marketOdds > 1.01
+        // Cuota real del mercado de Bzzoiro para 1X o X2
+        val marketO = if (isHomeFav) odds.dc1X else odds.dcX2
+        val hasMarketOdds = marketO != null && marketO > 1.01
 
-        val finalOdds = if (hasMarket) marketOdds!! else fairOdds
-        val displayOdds = if (hasMarket) {
-            String.format(Locale.US, "@%.2f", marketOdds)
+        val finalOddsNum = if (hasMarketOdds) marketO!! else fairO
+        val displayOdds = if (hasMarketOdds) {
+            String.format(Locale.US, "@%.2f", marketO)
         } else {
-            String.format(Locale.US, "@%.2f (Calc)", fairOdds)
+            String.format(Locale.US, "@%.2f (Calc)", fairO)
         }
 
-        val ev = if (hasMarket) (modelProb * marketOdds!!) - 1.0 else null
+        val ev = if (hasMarketOdds) (modelP * marketO!!) - 1.0 else null
 
-        val confidence = when {
-            modelProb >= 0.80 -> "ALTA CONFIANZA"
-            modelProb >= 0.68 -> "MODERADA"
-            else -> "RIESGO MEDIO"
+        val badge = when {
+            ev != null && ev > 0.05 -> "VALOR POSITIVO (+${(ev * 100).toInt()}%)"
+            modelP >= 0.75 -> "ALTA COBERTURA (${(modelP * 100).toInt()}%)"
+            modelP >= 0.60 -> "PROBABILIDAD ${(modelP * 100).toInt()}%"
+            else -> "COBERTURA AJUSTADA (${(modelP * 100).toInt()}%)"
         }
 
-        val desc = if (hasMarket) {
-            "Mercado oficial 1X2/DC en Bzzoiro. Cobertura del favorito $favTeam frente a $dogTeam con ${(modelProb * 100).toInt()}% prob."
-        } else {
-            "Cuota justa matemática calculada por modelo Poisson (1/P = $displayOdds). Cobertura del favorito $favTeam."
-        }
+        val favWinProbPct = ((if (isHomeFav) pHome else pAway) * 100).toInt()
+        val desc = "El modelo Poisson designa a $favTeam como favorito con ${favWinProbPct}% de prob. directa. La Doble Oportunidad ($pickCode) cubre tanto su triunfo como la igualdad con un ${(modelP * 100).toInt()}% de cobertura matemática."
 
         return DoubleChanceFavoriteAnalysis(
             favoriteTeam = favTeam,
@@ -1244,254 +1359,199 @@ object QuantumMathEngine {
             pickCode = pickCode,
             pickTitle = pickTitle,
             displayOdds = displayOdds,
-            rawOdds = finalOdds,
-            isMarketOdds = hasMarket,
-            modelProb = modelProb,
-            fairOdds = fairOdds,
+            rawOdds = finalOddsNum,
+            isMarketOdds = hasMarketOdds,
+            modelProb = modelP,
+            fairOdds = fairO,
             expectedValue = ev,
-            confidenceBadge = confidence,
+            confidenceBadge = badge,
             analysisDescription = desc
         )
     }
 
     /**
-     * Proyección cuantitativa de Córners usando medias de Bzzoiro
+     * Proyección cuantitativa de CÓRNERS alimentada con promedios reales de Bzzoiro
      */
     fun analyzeCorners(homeStats: TeamRealFormStats, awayStats: TeamRealFormStats, odds: RealOdds): CornersAnalysis {
-        val homeCorners = homeStats.avgCorners.coerceIn(3.0, 9.5)
-        val awayCorners = awayStats.avgCorners.coerceIn(2.5, 8.5)
-        val lambdaCorners = homeCorners + awayCorners
+        val expHome = homeStats.avgCorners.coerceIn(2.5, 8.5)
+        val expAway = awayStats.avgCorners.coerceIn(2.0, 7.5)
+        val expTotal = expHome + expAway
 
-        var pUnder85 = 0.0
-        var pUnder95 = 0.0
-        var pUnder105 = 0.0
+        val pO85 = 1.0 - poissonCdf(8, expTotal)
+        val pO95 = 1.0 - poissonCdf(9, expTotal)
+        val pO105 = 1.0 - poissonCdf(10, expTotal)
 
-        for (k in 0..8) pUnder85 += poissonPmf(k, lambdaCorners)
-        for (k in 0..9) pUnder95 += poissonPmf(k, lambdaCorners)
-        for (k in 0..10) pUnder105 += poissonPmf(k, lambdaCorners)
+        val fair85 = (1.0 / pO85).coerceAtLeast(1.04)
+        val fair95 = (1.0 / pO95).coerceAtLeast(1.04)
+        val fair105 = (1.0 / pO105).coerceAtLeast(1.04)
 
-        val pOver85 = (1.0 - pUnder85).coerceIn(0.15, 0.95)
-        val pOver95 = (1.0 - pUnder95).coerceIn(0.10, 0.90)
-        val pOver105 = (1.0 - pUnder105).coerceIn(0.08, 0.85)
-
-        val fair85 = 1.0 / pOver85
-        val fair95 = 1.0 / pOver95
-        val fair105 = 1.0 / pOver105
-
-        val hasMktCorners = odds.overCornerLine != null && odds.overCornerLine > 1.01
-        val (recPick, recProb, recFair) = when {
-            pOver85 >= 0.65 -> Triple("Más de 8.5 Córners", pOver85, fair85)
-            pOver95 >= 0.55 -> Triple("Más de 9.5 Córners", pOver95, fair95)
-            else -> Triple("Menos de 10.5 Córners", pUnder105, 1.0 / pUnder105)
+        val (recPick, recP, recFair) = if (expTotal >= 9.8) {
+            Triple("Más de 9.5 Córners", pO95, fair95)
+        } else {
+            Triple("Más de 8.5 Córners", pO85, fair85)
         }
 
-        val disp = if (hasMktCorners) {
+        val hasMarketOdds = odds.overCornerLine != null && odds.overCornerLine > 1.01
+        val displayOdds = if (hasMarketOdds) {
             String.format(Locale.US, "@%.2f", odds.overCornerLine)
         } else {
             String.format(Locale.US, "@%.2f (Calc)", recFair)
         }
 
         return CornersAnalysis(
-            expectedTotal = lambdaCorners,
-            expectedHome = homeCorners,
-            expectedAway = awayCorners,
-            linePrincipal = odds.cornerLineVal ?: 8.5,
-            probOver85 = pOver85,
+            expectedTotal = expTotal,
+            expectedHome = expHome,
+            expectedAway = expAway,
+            linePrincipal = if (expTotal >= 9.8) 9.5 else 8.5,
+            probOver85 = pO85,
             fairOddsOver85 = fair85,
-            probOver95 = pOver95,
+            probOver95 = pO95,
             fairOddsOver95 = fair95,
-            probOver105 = pOver105,
+            probOver105 = pO105,
             fairOddsOver105 = fair105,
             recommendedPick = recPick,
-            recommendedProb = recProb,
-            displayOdds = disp,
-            isMarketOdds = hasMktCorners
+            recommendedProb = recP,
+            displayOdds = displayOdds,
+            isMarketOdds = hasMarketOdds
         )
     }
 
     /**
-     * Proyección cuantitativa de Tarjetas usando medias de Bzzoiro
+     * Proyección cuantitativa de TARJETAS basada en promedios reales de Bzzoiro
      */
     fun analyzeCards(homeStats: TeamRealFormStats, awayStats: TeamRealFormStats): CardsAnalysis {
-        val yHome = homeStats.avgYellowCards.coerceIn(1.0, 5.0)
-        val yAway = awayStats.avgYellowCards.coerceIn(1.0, 5.0)
-        val lambdaY = yHome + yAway
-        val redProb = 0.22
+        val expYellow = (homeStats.avgYellowCards + awayStats.avgYellowCards).coerceIn(2.0, 7.5)
+        val expRedP = (1.0 - exp(-expYellow * 0.055)).coerceIn(0.12, 0.38)
+        val expTotal = expYellow + (expRedP * 1.5)
 
-        var pUnder35 = 0.0
-        var pUnder45 = 0.0
+        val pO35 = 1.0 - poissonCdf(3, expTotal)
+        val pO45 = 1.0 - poissonCdf(4, expTotal)
 
-        for (k in 0..3) pUnder35 += poissonPmf(k, lambdaY)
-        for (k in 0..4) pUnder45 += poissonPmf(k, lambdaY)
+        val fair35 = (1.0 / pO35).coerceAtLeast(1.04)
+        val fair45 = (1.0 / pO45).coerceAtLeast(1.04)
 
-        val pOver35 = (1.0 - pUnder35).coerceIn(0.20, 0.95)
-        val pOver45 = (1.0 - pUnder45).coerceIn(0.12, 0.88)
-
-        val fair35 = 1.0 / pOver35
-        val fair45 = 1.0 / pOver45
-
-        val frictionText = when {
-            lambdaY >= 5.0 -> "ALTA FRICCIÓN"
-            lambdaY >= 4.0 -> "FRICCIÓN MEDIA"
-            else -> "JUEGO LIMPIO"
+        val friction = when {
+            expTotal >= 5.5 -> "ALTA FRICCIÓN"
+            expTotal >= 4.2 -> "INTENSIDAD MEDIA"
+            else -> "TEMPLADO"
         }
 
-        val (recPick, recProb, recFair) = if (pOver35 >= 0.65) {
-            Triple("Más de 3.5 Tarjetas", pOver35, fair35)
+        val (recPick, recP, recFair) = if (expTotal >= 5.0) {
+            Triple("Más de 4.5 Tarjetas", pO45, fair45)
         } else {
-            Triple("Menos de 4.5 Tarjetas", pUnder45, 1.0 / pUnder45)
+            Triple("Más de 3.5 Tarjetas", pO35, fair35)
         }
 
         return CardsAnalysis(
-            expectedTotal = lambdaY,
-            expectedYellow = lambdaY,
-            expectedRedProb = redProb,
-            linePrincipal = 4.5,
-            probOver35 = pOver35,
+            expectedTotal = expTotal,
+            expectedYellow = expYellow,
+            expectedRedProb = expRedP,
+            linePrincipal = if (expTotal >= 5.0) 4.5 else 3.5,
+            probOver35 = pO35,
             fairOddsOver35 = fair35,
-            probOver45 = pOver45,
+            probOver45 = pO45,
             fairOddsOver45 = fair45,
-            frictionIndexText = frictionText,
+            frictionIndex = friction,
             recommendedPick = recPick,
-            recommendedProb = recProb,
+            recommendedProb = recP,
             displayOdds = String.format(Locale.US, "@%.2f (Calc)", recFair)
         )
     }
 
     /**
-     * Generación de props de remates y remates al arco para atacantes reales de este partido
+     * Proyecciones de remates usando atacantes REALES verificados estrictamente para cada equipo.
      */
     fun generateRealPlayerProps(
         homeTeam: String,
         awayTeam: String,
-        homeAttackers: List<Pair<String, String>>,
-        awayAttackers: List<Pair<String, String>>,
+        homeSquad: List<Pair<String, String>>,
+        awaySquad: List<Pair<String, String>>,
         homeStats: TeamRealFormStats,
         awayStats: TeamRealFormStats
-    ): List<RealPlayerShotProp> {
-        val list = mutableListOf<RealPlayerShotProp>()
+    ): List<PlayerShotProp> {
+        val list = mutableListOf<PlayerShotProp>()
 
-        // 1. Delantero Principal Local
-        if (homeAttackers.isNotEmpty()) {
-            val strikerH = homeAttackers[0]
-            val shotShare = 0.26
-            val sotShare = 0.32
-            val shotsLambdaH = (homeStats.avgTotalShots * shotShare).coerceIn(1.8, 4.2)
-            val sotLambdaH = (homeStats.avgShotsOnTarget * sotShare).coerceIn(0.8, 2.4)
+        // Atacante 1 Local
+        val p1 = homeSquad.getOrNull(0) ?: Pair("Delantero ($homeTeam)", "Delantero Centro")
+        val hFwdShots = (homeStats.avgTotalShots * 0.22).coerceIn(1.8, 4.2)
+        val hFwdSoT = (homeStats.avgShotsOnTarget * 0.32).coerceIn(0.8, 2.1)
+        val hFwdProbSoT1 = 1.0 - exp(-hFwdSoT)
+        val hFwdProbSoT15 = 1.0 - (poissonPmf(0, hFwdSoT) + poissonPmf(1, hFwdSoT))
+        val (pickH, probH) = if (hFwdSoT >= 1.25) Pair("Más de 1.5 al Arco", hFwdProbSoT15) else Pair("Más de 0.5 al Arco", hFwdProbSoT1)
+        val probShotsH = 1.0 - poissonCdf(2, hFwdShots)
+        val fairOddsH = (1.0 / probH).coerceAtLeast(1.05)
 
-            val pOver05SoT_H = (1.0 - exp(-sotLambdaH)).coerceIn(0.45, 0.92)
-            val fairOddsH = 1.0 / pOver05SoT_H
-            val pOver25Shots_H = (1.0 - (poissonPmf(0, shotsLambdaH) + poissonPmf(1, shotsLambdaH) + poissonPmf(2, shotsLambdaH))).coerceIn(0.20, 0.85)
-
-            list.add(
-                RealPlayerShotProp(
-                    playerId = 101L,
-                    fullName = strikerH.first,
-                    teamName = homeTeam,
-                    position = strikerH.second,
-                    totalShotsLambda = shotsLambdaH,
-                    shotsOnTargetLambda = sotLambdaH,
-                    pickOnTarget = "Más de 0.5 al Arco",
-                    probOnTarget = pOver05SoT_H,
-                    fairOddsOnTarget = fairOddsH,
-                    pickTotalShots = "Más de 2.5 Remates",
-                    probTotalShots = pOver25Shots_H,
-                    fairOddsTotalShots = 1.0 / pOver25Shots_H,
-                    displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOddsH),
-                    isMarketOdds = false
-                )
+        list.add(
+            PlayerShotProp(
+                fullName = p1.first,
+                teamName = homeTeam,
+                rolePosition = p1.second,
+                totalShotsLambda = hFwdShots,
+                shotsOnTargetLambda = hFwdSoT,
+                pickTotalShots = "Más de 2.5 Remates",
+                probTotalShots = probShotsH,
+                pickOnTarget = pickH,
+                probOnTarget = probH,
+                fairOddsOnTarget = fairOddsH,
+                displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOddsH)
             )
-        }
+        )
 
-        // 2. Extremo / Mediapunta Local
-        if (homeAttackers.size > 1) {
-            val wingerH = homeAttackers[1]
-            val shotShare = 0.18
-            val sotShare = 0.20
-            val shotsLambdaHWing = (homeStats.avgTotalShots * shotShare).coerceIn(1.2, 3.2)
-            val sotLambdaHWing = (homeStats.avgShotsOnTarget * sotShare).coerceIn(0.5, 1.8)
+        // Atacante 2 Local
+        val p2 = homeSquad.getOrNull(1) ?: Pair("Extremo ($homeTeam)", "Extremo Ofensivo")
+        val hWingShots = (homeStats.avgTotalShots * 0.16).coerceIn(1.2, 3.0)
+        val hWingSoT = (homeStats.avgShotsOnTarget * 0.22).coerceIn(0.5, 1.4)
+        val hWingProbSoT = 1.0 - exp(-hWingSoT)
+        val probShotsHWing = 1.0 - poissonCdf(1, hWingShots)
+        val fairOddsHWing = (1.0 / hWingProbSoT).coerceAtLeast(1.05)
 
-            val pOver05SoT_HWing = (1.0 - exp(-sotLambdaHWing)).coerceIn(0.35, 0.85)
-            val fairOddsHWing = 1.0 / pOver05SoT_HWing
-            val pOver15Shots_HWing = (1.0 - (poissonPmf(0, shotsLambdaHWing) + poissonPmf(1, shotsLambdaHWing))).coerceIn(0.30, 0.85)
-
-            list.add(
-                RealPlayerShotProp(
-                    playerId = 102L,
-                    fullName = wingerH.first,
-                    teamName = homeTeam,
-                    position = wingerH.second,
-                    totalShotsLambda = shotsLambdaHWing,
-                    shotsOnTargetLambda = sotLambdaHWing,
-                    pickOnTarget = "Más de 0.5 al Arco",
-                    probOnTarget = pOver05SoT_HWing,
-                    fairOddsOnTarget = fairOddsHWing,
-                    pickTotalShots = "Más de 1.5 Remates",
-                    probTotalShots = pOver15Shots_HWing,
-                    fairOddsTotalShots = 1.0 / pOver15Shots_HWing,
-                    displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOddsHWing),
-                    isMarketOdds = false
-                )
+        list.add(
+            PlayerShotProp(
+                fullName = p2.first,
+                teamName = homeTeam,
+                rolePosition = p2.second,
+                totalShotsLambda = hWingShots,
+                shotsOnTargetLambda = hWingSoT,
+                pickTotalShots = "Más de 1.5 Remates",
+                probTotalShots = probShotsHWing,
+                pickOnTarget = "Más de 0.5 al Arco",
+                probOnTarget = hWingProbSoT,
+                fairOddsOnTarget = fairOddsHWing,
+                displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOddsHWing)
             )
-        }
+        )
 
-        // 3. Delantero Visitante
-        if (awayAttackers.isNotEmpty()) {
-            val strikerA = awayAttackers[0]
-            val shotShareA = 0.24
-            val sotShareA = 0.30
-            val shotsLambdaA = (awayStats.avgTotalShots * shotShareA).coerceIn(1.5, 3.8)
-            val sotLambdaA = (awayStats.avgShotsOnTarget * sotShareA).coerceIn(0.6, 2.1)
+        // Atacante 3 Visitante
+        val p3 = awaySquad.getOrNull(0) ?: Pair("Delantero ($awayTeam)", "Delantero Centro")
+        val aFwdShots = (awayStats.avgTotalShots * 0.20).coerceIn(1.5, 3.8)
+        val aFwdSoT = (awayStats.avgShotsOnTarget * 0.28).coerceIn(0.6, 1.8)
+        val aFwdProbSoT1 = 1.0 - exp(-aFwdSoT)
+        val aFwdProbSoT15 = 1.0 - (poissonPmf(0, aFwdSoT) + poissonPmf(1, aFwdSoT))
+        val (pickA, probA) = if (aFwdSoT >= 1.25) Pair("Más de 1.5 al Arco", aFwdProbSoT15) else Pair("Más de 0.5 al Arco", aFwdProbSoT1)
+        val probShotsA = 1.0 - poissonCdf(2, aFwdShots)
+        val fairOddsA = (1.0 / probA).coerceAtLeast(1.05)
 
-            val pOver05SoT_A = (1.0 - exp(-sotLambdaA)).coerceIn(0.40, 0.88)
-            val fairOddsA = 1.0 / pOver05SoT_A
-            val pOver25Shots_A = (1.0 - (poissonPmf(0, shotsLambdaA) + poissonPmf(1, shotsLambdaA) + poissonPmf(2, shotsLambdaA))).coerceIn(0.18, 0.80)
-
-            list.add(
-                RealPlayerShotProp(
-                    playerId = 201L,
-                    fullName = strikerA.first,
-                    teamName = awayTeam,
-                    position = strikerA.second,
-                    totalShotsLambda = shotsLambdaA,
-                    shotsOnTargetLambda = sotLambdaA,
-                    pickOnTarget = "Más de 0.5 al Arco",
-                    probOnTarget = pOver05SoT_A,
-                    fairOddsOnTarget = fairOddsA,
-                    pickTotalShots = "Más de 2.5 Remates",
-                    probTotalShots = pOver25Shots_A,
-                    fairOddsTotalShots = 1.0 / pOver25Shots_A,
-                    displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOddsA),
-                    isMarketOdds = false
-                )
+        list.add(
+            PlayerShotProp(
+                fullName = p3.first,
+                teamName = awayTeam,
+                rolePosition = p3.second,
+                totalShotsLambda = aFwdShots,
+                shotsOnTargetLambda = aFwdSoT,
+                pickTotalShots = "Más de 2.5 Remates",
+                probTotalShots = probShotsA,
+                pickOnTarget = pickA,
+                probOnTarget = probA,
+                fairOddsOnTarget = fairOddsA,
+                displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOddsA)
             )
-        }
+        )
 
         return list
     }
 
     /**
-     * Mapeo visual de últimos 5 partidos a estados V (Verde), E (Amarillo), D (Rojo)
-     */
-    fun parseFormStringToBadges(formStr: String): List<MatchFormResult> {
-        val list = mutableListOf<MatchFormResult>()
-        val clean = formStr.trim().uppercase()
-        for (ch in clean.take(5)) {
-            when (ch) {
-                'W', 'V' -> list.add(MatchFormResult("V", FormOutcome.WIN, "Rival", "1-0"))
-                'D', 'E' -> list.add(MatchFormResult("E", FormOutcome.DRAW, "Rival", "1-1"))
-                'L', 'D' -> list.add(MatchFormResult("D", FormOutcome.LOSS, "Rival", "0-1"))
-                else -> list.add(MatchFormResult("E", FormOutcome.DRAW, "Rival", "0-0"))
-            }
-        }
-        while (list.size < 5) {
-            list.add(MatchFormResult("E", FormOutcome.DRAW, "Rival", "1-1"))
-        }
-        return list
-    }
-
-    /**
-     * Motor principal Poisson Bivariado alimentado con datos oficiales de Bzzoiro
+     * Motor principal cuantitativo con Poisson Bivariada, forma real y cuotas de mercado.
      */
     fun analyzeEventWithRealData(
         event: ApexEvent,
@@ -1501,23 +1561,24 @@ object QuantumMathEngine {
         homeSquad: List<Pair<String, String>>,
         awaySquad: List<Pair<String, String>>
     ): QuantumMatchAnalysis {
-        // Cálculo de lambdas de goles realistas basados en forma real de Bzzoiro
-        val homeAdvantage = 1.15
-        val homeAttack = (homeStats.avgGoalsScored / 1.35).coerceIn(0.70, 2.30)
-        val awayDefense = (awayStats.avgGoalsConceded / 1.25).coerceIn(0.70, 2.20)
-        val awayAttack = (awayStats.avgGoalsScored / 1.20).coerceIn(0.65, 2.10)
-        val homeDefense = (homeStats.avgGoalsConceded / 1.30).coerceIn(0.65, 2.10)
+        // Cálculo de lambdas bivariados basados en métricas de goles de Bzzoiro
+        val leagueAvg = 1.35
+        val homeAttack = (homeStats.avgGoalsScored / leagueAvg).coerceIn(0.60, 2.50)
+        val awayDefense = (awayStats.avgGoalsConceded / leagueAvg).coerceIn(0.60, 2.40)
+        val awayAttack = (awayStats.avgGoalsScored / leagueAvg).coerceIn(0.60, 2.50)
+        val homeDefense = (homeStats.avgGoalsConceded / leagueAvg).coerceIn(0.60, 2.40)
 
-        // Bounded lambdas para reflejar la realidad del fútbol competitivo
-        val lambdaHome = ((1.40 * homeAttack * awayDefense) * homeAdvantage).coerceIn(1.05, 3.80)
-        val lambdaAway = ((1.15 * awayAttack * homeDefense) / homeAdvantage).coerceIn(0.85, 3.40)
+        // Ventaja de localía moderada y realista (+8%)
+        val homeAdvantage = 1.08
+        val lambdaHome = (leagueAvg * homeAttack * awayDefense * homeAdvantage).coerceIn(0.65, 4.00)
+        val lambdaAway = ((leagueAvg * awayAttack * homeDefense) / homeAdvantage).coerceIn(0.60, 3.80)
         val lambdaTotal = lambdaHome + lambdaAway
 
         // Distribución de Poisson Bivariada exacta (matriz 0..5)
         val matrix = Array(6) { DoubleArray(6) }
-        var pHome = 0.0
-        var pDraw = 0.0
-        var pAway = 0.0
+        var rawHome = 0.0
+        var rawDraw = 0.0
+        var rawAway = 0.0
         var pOver15 = 0.0
         var pOver25 = 0.0
         var pOver35 = 0.0
@@ -1533,9 +1594,9 @@ object QuantumMathEngine {
                 val pJoint = pi * pj
                 matrix[i][j] = pJoint
 
-                if (i > j) pHome += pJoint
-                else if (i == j) pDraw += pJoint
-                else pAway += pJoint
+                if (i > j) rawHome += pJoint
+                else if (i == j) rawDraw += pJoint
+                else rawAway += pJoint
 
                 val tot = i + j
                 if (tot > 1) pOver15 += pJoint
@@ -1543,7 +1604,6 @@ object QuantumMathEngine {
                 if (tot > 3) pOver35 += pJoint
                 if (i > 0 && j > 0) pBTTS += pJoint
 
-                // Marcador con probabilidad matemática máxima conjunta
                 if (pJoint > bestScoreP) {
                     bestScoreP = pJoint
                     bestScore = "$i - $j"
@@ -1551,7 +1611,13 @@ object QuantumMathEngine {
             }
         }
 
-        // Salvaguarda: NUNCA dejar un 0-0 fijo
+        // Normalizar probabilidades 1X2 para sumar exactamente 1.00
+        val sum1x2 = (rawHome + rawDraw + rawAway).coerceAtLeast(0.01)
+        val pHome = rawHome / sum1x2
+        val pDraw = rawDraw / sum1x2
+        val pAway = rawAway / sum1x2
+
+        // Salvaguarda: NUNCA dejar un 0-0 fijo si hay otros marcadores competitivos
         if (bestScore == "0 - 0" && (matrix[1][0] >= 0.10 || matrix[1][1] >= 0.10 || matrix[0][1] >= 0.10)) {
             val candidate10 = matrix[1][0]
             val candidate11 = matrix[1][1]
@@ -1577,29 +1643,36 @@ object QuantumMathEngine {
         val cornersAnalysis = analyzeCorners(homeStats, awayStats, odds)
         val cardsAnalysis = analyzeCards(homeStats, awayStats)
         val playerProps = generateRealPlayerProps(event.homeTeam, event.awayTeam, homeSquad, awaySquad, homeStats, awayStats)
+        val mainStriker = playerProps.firstOrNull()
 
-        // Ticket Parlay Cuántico (Combinada del partido)
-        val legs = mutableListOf<ParlayLeg>()
+        // ==============================================================================
+        // COMBINADA DEL PARTIDO (SIN INVENTOS NI APUESTAS FORZADAS):
+        // Solo se seleccionan patas con alta probabilidad matemática (>55%).
+        // Si no hay al menos 2 patas de valor suficiente, la lista queda VACÍA.
+        // ==============================================================================
+        val qualifyingLegs = mutableListOf<ParlayLeg>()
 
-        // Pata 1: Doble Oportunidad
-        legs.add(
-            ParlayLeg(
-                category = "DOBLE OP",
-                pick = dcAnalysis.pickTitle,
-                lambda = null,
-                modelProb = dcAnalysis.modelProb,
-                displayOdds = dcAnalysis.displayOdds,
-                edgePercent = dcAnalysis.expectedValue?.let { it * 100.0 },
-                isSafePick = dcAnalysis.modelProb >= 0.70
+        // Candidato 1: Doble Oportunidad del Favorito (P >= 55%)
+        if (dcAnalysis.modelProb >= 0.55) {
+            qualifyingLegs.add(
+                ParlayLeg(
+                    category = "DOBLE OP",
+                    pick = dcAnalysis.pickTitle,
+                    lambda = null,
+                    modelProb = dcAnalysis.modelProb,
+                    displayOdds = dcAnalysis.displayOdds,
+                    edgePercent = dcAnalysis.expectedValue?.let { it * 100.0 },
+                    isSafePick = dcAnalysis.modelProb >= 0.70
+                )
             )
-        )
+        }
 
-        // Pata 2: Goles (Over 1.5 si alta prob, o Under 3.5)
-        if (pOver15 >= 0.70) {
+        // Candidato 2: Goles con alta probabilidad matemática
+        if (pOver15 >= 0.65) {
             val fairO15 = 1.0 / pOver15
             val hasMktO15 = odds.over15Goals != null && odds.over15Goals > 1.01
             val dispO15 = if (hasMktO15) String.format(Locale.US, "@%.2f", odds.over15Goals) else String.format(Locale.US, "@%.2f (Calc)", fairO15)
-            legs.add(
+            qualifyingLegs.add(
                 ParlayLeg(
                     category = "GOLES",
                     pick = "Más de 1.5 Goles",
@@ -1610,12 +1683,12 @@ object QuantumMathEngine {
                     isSafePick = pOver15 >= 0.75
                 )
             )
-        } else {
+        } else if ((1.0 - pOver35) >= 0.65) {
             val pUnder35 = 1.0 - pOver35
             val fairU35 = 1.0 / pUnder35
             val hasMktU35 = odds.under35Goals != null && odds.under35Goals > 1.01
             val dispU35 = if (hasMktU35) String.format(Locale.US, "@%.2f", odds.under35Goals) else String.format(Locale.US, "@%.2f (Calc)", fairU35)
-            legs.add(
+            qualifyingLegs.add(
                 ParlayLeg(
                     category = "GOLES",
                     pick = "Menos de 3.5 Goles",
@@ -1623,28 +1696,29 @@ object QuantumMathEngine {
                     modelProb = pUnder35,
                     displayOdds = dispU35,
                     edgePercent = null,
-                    isSafePick = pUnder35 >= 0.70
+                    isSafePick = pUnder35 >= 0.75
                 )
             )
         }
 
-        // Pata 3: Córners
-        legs.add(
-            ParlayLeg(
-                category = "CÓRNERS",
-                pick = cornersAnalysis.recommendedPick,
-                lambda = cornersAnalysis.expectedTotal,
-                modelProb = cornersAnalysis.recommendedProb,
-                displayOdds = cornersAnalysis.displayOdds,
-                edgePercent = null,
-                isSafePick = cornersAnalysis.recommendedProb >= 0.65
+        // Candidato 3: Córners (P >= 55%)
+        if (cornersAnalysis.recommendedProb >= 0.55) {
+            qualifyingLegs.add(
+                ParlayLeg(
+                    category = "CÓRNERS",
+                    pick = cornersAnalysis.recommendedPick,
+                    lambda = cornersAnalysis.expectedTotal,
+                    modelProb = cornersAnalysis.recommendedProb,
+                    displayOdds = cornersAnalysis.displayOdds,
+                    edgePercent = null,
+                    isSafePick = cornersAnalysis.recommendedProb >= 0.65
+                )
             )
-        )
+        }
 
-        // Pata 4: Remate al arco del atacante real del encuentro
-        val mainStriker = playerProps.firstOrNull()
-        if (mainStriker != null) {
-            legs.add(
+        // Candidato 4: Remate al arco del atacante del encuentro (P >= 55%)
+        if (mainStriker != null && mainStriker.probOnTarget >= 0.55) {
+            qualifyingLegs.add(
                 ParlayLeg(
                     category = "REMATES",
                     pick = "${mainStriker.fullName}: ${mainStriker.pickOnTarget}",
@@ -1652,27 +1726,28 @@ object QuantumMathEngine {
                     modelProb = mainStriker.probOnTarget,
                     displayOdds = mainStriker.displayOdds,
                     edgePercent = null,
-                    isSafePick = mainStriker.probOnTarget >= 0.60
+                    isSafePick = mainStriker.probOnTarget >= 0.65
                 )
             )
         }
 
-        // Multiplicador del Parlay
-        var jointProb = 1.0
-        var cumFair = 1.0
-        for (l in legs) {
-            jointProb *= l.modelProb
-            val legOddsNum = if (l.displayOdds.contains("@")) {
-                l.displayOdds.substringAfter("@").substringBefore(" ").toDoubleOrNull() ?: (1.0 / l.modelProb)
-            } else 1.3
-            cumFair *= legOddsNum
-        }
-        jointProb = (jointProb * 1.15).coerceIn(0.05, 0.95)
-        val parlayOddsVal = (1.0 / jointProb).coerceIn(1.8, 18.0)
-        val parlayDisplay = String.format(Locale.US, "@%.2f", parlayOddsVal)
+        // Si no hay al menos 2 patas que superen el umbral, NO inventar combinada absurda
+        val parlayLegs = if (qualifyingLegs.size >= 2) qualifyingLegs.take(4) else emptyList()
 
-        // Criterio de Kelly fraccional
-        val kelly = ((jointProb * parlayOddsVal - 1.0) / (parlayOddsVal - 1.0) * 0.25 * 100.0).coerceIn(1.0, 4.5)
+        // Probabilidad conjunta y cuota total calculada
+        val (jointProb, parlayDisplay, kelly) = if (parlayLegs.isNotEmpty()) {
+            var jProb = 1.0
+            for (l in parlayLegs) {
+                jProb *= l.modelProb
+            }
+            jProb = (jProb * 1.15).coerceIn(0.08, 0.95)
+            val pOddsVal = (1.0 / jProb).coerceIn(1.30, 20.0)
+            val pDisp = String.format(Locale.US, "@%.2f", pOddsVal)
+            val kStake = ((jProb * pOddsVal - 1.0) / (pOddsVal - 1.0) * 0.25 * 100.0).coerceIn(1.0, 4.5)
+            Triple(jProb, pDisp, kStake)
+        } else {
+            Triple(0.0, "-", 0.0)
+        }
 
         // DETERMINAR LA APUESTA PRINCIPAL / SEGURA
         val (safeTitle, safePick, safeOdds, safeProbStr) = when {
@@ -1692,11 +1767,11 @@ object QuantumMathEngine {
         }
 
         // VEREDICTO DINÁMICO
-        val strikerName = mainStriker?.fullName ?: "el atacante principal"
-        val quickVerdict = if (mainStriker != null && mainStriker.totalShotsLambda >= 2.2) {
-            "Buen valor en remates de $strikerName (${mainStriker.pickOnTarget} a ${mainStriker.displayOdds}). Cobertura recomendada con ${dcAnalysis.pickCode} (${(dcAnalysis.modelProb * 100).toInt()}% prob) y ${cornersAnalysis.recommendedPick}."
+        val strikerName = mainStriker?.fullName ?: "el atacante"
+        val quickVerdict = if (mainStriker != null && mainStriker.totalShotsLambda >= 2.0 && mainStriker.probOnTarget >= 0.55) {
+            "Valor en remates de $strikerName (${mainStriker.pickOnTarget} a ${mainStriker.displayOdds}). Cobertura con ${dcAnalysis.pickCode} (${(dcAnalysis.modelProb * 100).toInt()}% prob) y ${cornersAnalysis.recommendedPick}."
         } else {
-            "La mejor opción matemática es $safePick ($safeOdds) combinada con ${cornersAnalysis.recommendedPick} ($bestScore como marcador central)."
+            "La mejor opción cuantitativa es $safePick ($safeOdds) combinada con ${cornersAnalysis.recommendedPick} ($bestScore como marcador central Poisson)."
         }
 
         val summary = MatchBettingSummary(
@@ -1706,7 +1781,7 @@ object QuantumMathEngine {
             safePickProb = safeProbStr,
             valuePick = cornersAnalysis.recommendedPick,
             valuePickOdds = cornersAnalysis.displayOdds,
-            playerPick = if (mainStriker != null) "${mainStriker.fullName}: ${mainStriker.pickOnTarget}" else "Atacante: +0.5 al Arco",
+            playerPick = if (mainStriker != null) "${mainStriker.fullName}: ${mainStriker.pickOnTarget}" else "Delantero: +0.5 al Arco",
             playerPickOdds = mainStriker?.displayOdds ?: "@1.50 (Calc)",
             cardsPick = cardsAnalysis.recommendedPick,
             predictedScore = bestScore,
@@ -1736,7 +1811,7 @@ object QuantumMathEngine {
             cardsAnalysis = cardsAnalysis,
             playerShotProps = playerProps,
             bettingSummary = summary,
-            parlayLegs = legs,
+            parlayLegs = parlayLegs,
             jointParlayProb = jointProb,
             parlayDisplayOdds = parlayDisplay,
             kellyStakePercent = kelly
@@ -1769,19 +1844,37 @@ class FootballStatsViewModel : ViewModel() {
 
     private var autoRefreshJob: Job? = null
 
+    /**
+     * Lista ordenada de ligas disponibles:
+     * - 'ALL' (Todas las Ligas) en primera posición.
+     * - Ligas principales (Premier, LaLiga, Serie A, Bundesliga, Argentina, MLS, etc.) al frente.
+     * - Ligas menores o secundarias al final ordenadas alfabéticamente.
+     */
     val availableLeagues: List<Pair<String, String>>
         get() {
             val list = mutableListOf(Pair("ALL", "Todas las Ligas"))
-            val map = mutableMapOf<String, String>()
+            val map = mutableMapOf<Long, String>()
             for (a in allAnalyses) {
-                val leagueId = a.event.leagueId.toString()
-                if (!map.containsKey(leagueId)) {
-                    map[leagueId] = a.event.leagueName
+                val lid = a.event.leagueId
+                if (!map.containsKey(lid)) {
+                    map[lid] = a.event.leagueName
                 }
             }
-            for ((id, name) in map) {
-                list.add(Pair(id, name))
+
+            // 1. Agregar ligas prioritarias presentes en los partidos
+            for (pId in PRIORITY_LEAGUE_ORDER) {
+                val name = map.remove(pId)
+                if (name != null) {
+                    list.add(Pair(pId.toString(), name))
+                }
             }
+
+            // 2. Agregar el resto de ligas ordenadas por nombre
+            val remainder = map.toList().sortedBy { it.second }
+            for ((id, name) in remainder) {
+                list.add(Pair(id.toString(), name))
+            }
+
             return list
         }
 
@@ -1798,7 +1891,7 @@ class FootballStatsViewModel : ViewModel() {
                     } else if (analysis.event.status == "inprogress" || analysis.event.currentMinute != null) {
                         true
                     } else if (matchLdt != null) {
-                        // Mayor o igual a LocalDateTime.now() (con margen de 105 min si ya empezó) y menor o igual a now + 24 horas
+                        // Mayor o igual a now (con margen de 105 min si ya empezó) y menor o igual a now + 24 horas
                         !matchLdt.isBefore(nowLdt.minusMinutes(105)) && !matchLdt.isAfter(limit24h)
                     } else {
                         false
@@ -1841,8 +1934,8 @@ class FootballStatsViewModel : ViewModel() {
             errorMessage = null
 
             try {
-                // 1. Obtener eventos reales distribuidos cronológicamente (hoy y próximos días)
-                val rawEvents = BzzoiroApiClient.fetchUpcomingEvents(daysAhead = 4, limitPerDay = 12)
+                // 1. Obtener eventos reales distribuidos cronológicamente (hoy y próximos días) sin recortes
+                val rawEvents = BzzoiroApiClient.fetchUpcomingEvents(daysAhead = 3, limitPerDay = 100)
 
                 if (rawEvents.isEmpty()) {
                     errorMessage = "No se encontraron eventos programados en Bzzoiro para este período."
@@ -2000,18 +2093,11 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "No se encontraron encuentros programados para las próximas 24 horas en esta liga.",
+                            text = "Pulsa 'TODOS' para ver los próximos encuentros o selecciona otra liga.",
                             color = Color(0xFF64748B),
                             fontSize = 12.sp,
                             textAlign = TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = { viewModel.onlyNext24Hours = false },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF))
-                        ) {
-                            Text("MOSTRAR TODOS LOS PARTIDOS", color = Color(0xFF070B14), fontWeight = FontWeight.Bold)
-                        }
                     }
                 }
             } else {
@@ -2029,22 +2115,26 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
 }
 
 // ==============================================================================
-// 7. COMPONENTES VISUALES: HEADER, SELECTORES Y CARDS DE ALTA FIDELIDAD
+// 7. COMPONENTES VISUALES: CABECERA, SELECTORES Y TARJETAS HUD
 // ==============================================================================
 
 @Composable
-fun ApexHeader(onRefresh: () -> Unit, isLoading: Boolean, lastSync: String) {
+fun ApexHeader(
+    onRefresh: () -> Unit,
+    isLoading: Boolean,
+    lastSync: String
+) {
     Surface(
-        color = Color(0xFF0C1322),
-        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+        color = Color(0xFF070B14),
+        border = BorderStroke(1.dp, Color(0xFF162032)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2179,21 +2269,22 @@ fun LeagueSelectorRow(
     onSelectLeague: (String) -> Unit
 ) {
     LazyRow(
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF070B14))
+            .background(Color(0xFF080D18))
+            .padding(vertical = 7.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         items(leagues) { (id, name) ->
-            val isSelected = id == selectedLeagueId
+            val isSelected = selectedLeagueId == id
             Surface(
-                color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.16f) else Color(0xFF0E1626),
+                color = if (isSelected) Color(0xFF1E293B) else Color(0xFF0E1626),
                 border = BorderStroke(
                     1.dp,
                     if (isSelected) Color(0xFF00E5FF) else Color(0xFF1E293B)
                 ),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.clickable { onSelectLeague(id) }
             ) {
                 Text(
@@ -2201,7 +2292,7 @@ fun LeagueSelectorRow(
                     fontSize = 11.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     color = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8),
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                 )
             }
         }
@@ -2211,44 +2302,48 @@ fun LeagueSelectorRow(
 @Composable
 fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
     val event = analysis.event
-    var selectedTabIndex by remember { mutableStateOf(0) }
-    val tabTitles = listOf("RESUMEN", "COMBINADA", "DOBLE OP", "REMATES", "CÓRNERS", "TARJETAS", "POISSON 1X2")
+    val dc = analysis.doubleChanceAnalysis
+    val corners = analysis.cornersAnalysis
+    val cards = analysis.cardsAnalysis
 
-    Surface(
-        color = Color(0xFF0D1424),
+    var activeTab by remember { mutableStateOf(0) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0E1626)),
         border = BorderStroke(1.dp, Color(0xFF1E293B)),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = 14.dp, vertical = 7.dp)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            // Header: Liga, Jornada y Estado Temporal
+            // Cabecera: Liga oficial y Fecha/Hora exacta en zona horaria local
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = event.leagueName.uppercase(),
-                        fontWeight = FontWeight.Black,
-                        fontSize = 11.sp,
-                        color = Color(0xFF00E5FF),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .background(Color(0xFF10B981), CircleShape)
                     )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = " • ${event.roundLabel}",
+                        text = "${event.leagueName.uppercase()} • ${event.roundLabel.uppercase()}",
+                        color = Color(0xFF94A3B8),
                         fontSize = 10.sp,
-                        color = Color(0xFF64748B),
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(0.66f)
                     )
                 }
 
                 Surface(
-                    color = if (event.status == "inprogress") Color(0xFFEF4444).copy(alpha = 0.2f) else Color(0xFF1E293B),
+                    color = if (event.status == "inprogress") Color(0xFFEF4444).copy(alpha = 0.2f) else Color(0xFF00E5FF).copy(alpha = 0.15f),
+                    border = BorderStroke(1.dp, if (event.status == "inprogress") Color(0xFFEF4444) else Color(0xFF00E5FF)),
                     shape = RoundedCornerShape(6.dp)
                 ) {
                     Text(
@@ -2283,32 +2378,37 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
                     RecentFormDotsRow(formList = event.homeRecentForm, label = "Local")
                 }
 
-                // Marcador / VS
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp)
-                        .background(Color(0xFF151F32), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                // Score / VS
+                Surface(
+                    color = Color(0xFF182438),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Color(0xFF26354D)),
+                    modifier = Modifier.padding(horizontal = 8.dp)
                 ) {
                     if (event.homeScore != null && event.awayScore != null) {
                         Text(
                             text = "${event.homeScore} - ${event.awayScore}",
-                            fontSize = 16.sp,
                             fontWeight = FontWeight.Black,
-                            color = Color(0xFF00E5FF)
+                            fontSize = 16.sp,
+                            color = Color(0xFF00E5FF),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     } else {
                         Text(
                             text = "VS",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF64748B)
+                            fontWeight = FontWeight.Black,
+                            fontSize = 13.sp,
+                            color = Color(0xFF64748B),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     }
                 }
 
                 // Visitante
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.End
+                ) {
                     Text(
                         text = event.awayTeam,
                         fontWeight = FontWeight.Black,
@@ -2323,678 +2423,630 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Scroll horizontal fluido para pestañas (evita que se corten textos)
+            // Selector de Módulos (Tabs con scroll horizontal)
+            val tabsList = listOf(
+                "RESUMEN APUESTAS",
+                "COMBINADA",
+                "DOBLE OP",
+                "CÓRNERS & TARJ",
+                "REMATES",
+                "POISSON 1X2"
+            )
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                tabTitles.forEachIndexed { index, title ->
-                    val isTabSelected = selectedTabIndex == index
+                tabsList.forEachIndexed { index, tabTitle ->
+                    val isSelected = activeTab == index
                     Surface(
-                        color = if (isTabSelected) Color(0xFF00E5FF).copy(alpha = 0.2f) else Color(0xFF141D2E),
+                        color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.16f) else Color(0xFF0A101D),
                         border = BorderStroke(
                             1.dp,
-                            if (isTabSelected) Color(0xFF00E5FF) else Color(0xFF223048)
+                            if (isSelected) Color(0xFF00E5FF) else Color(0xFF1E293B)
                         ),
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.clickable { selectedTabIndex = index }
+                        modifier = Modifier.clickable { activeTab = index }
                     ) {
                         Text(
-                            text = title,
+                            text = tabTitle,
                             fontSize = 10.sp,
-                            fontWeight = if (isTabSelected) FontWeight.Black else FontWeight.Bold,
-                            color = if (isTabSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8),
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold,
+                            color = if (isSelected) Color(0xFF00E5FF) else Color(0xFF94A3B8),
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Contenido dinámico de la pestaña activa
-            when (selectedTabIndex) {
-                0 -> SummaryTabContent(analysis = analysis)
-                1 -> ParlayTabContent(analysis = analysis)
-                2 -> DoubleChanceTabContent(analysis = analysis)
-                3 -> PlayerShotsTabContent(analysis = analysis)
-                4 -> CornersTabContent(analysis = analysis)
-                5 -> CardsTabContent(analysis = analysis)
-                6 -> Poisson1X2TabContent(analysis = analysis)
+            when (activeTab) {
+                0 -> MatchBettingSummaryView(summary = analysis.bettingSummary)
+                1 -> MatchBetBuilderCardView(analysis = analysis)
+                2 -> DoubleChanceModuleView(dc = dc)
+                3 -> CornersAndCardsModuleView(corners = corners, cards = cards)
+                4 -> PlayerShotsModuleView(players = analysis.playerShotProps)
+                5 -> Poisson1X2ModuleView(analysis = analysis)
             }
         }
     }
 }
 
-/**
- * Círculos centrados de forma de últimos 5 partidos (Verde = V, Amarillo = E, Rojo = D)
- */
 @Composable
 fun RecentFormDotsRow(formList: List<MatchFormResult>, label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        formList.take(5).forEach { item ->
-            val (bgColor, textColor) = when (item.outcome) {
-                FormOutcome.WIN -> Pair(Color(0xFF10B981), Color(0xFF052E16))
-                FormOutcome.DRAW -> Pair(Color(0xFFF59E0B), Color(0xFF451A03))
-                FormOutcome.LOSS -> Pair(Color(0xFFEF4444), Color(0xFF450A0A))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = "$label: ",
+            fontSize = 9.sp,
+            color = Color(0xFF64748B),
+            fontWeight = FontWeight.Bold
+        )
+        for (item in formList) {
+            val bgColor = when (item.outcome) {
+                FormOutcome.WIN -> Color(0xFF10B981)
+                FormOutcome.DRAW -> Color(0xFFF59E0B)
+                FormOutcome.LOSS -> Color(0xFFEF4444)
             }
             Box(
-                contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(17.dp)
-                    .background(bgColor, CircleShape)
+                    .size(19.dp)
+                    .clip(CircleShape)
+                    .background(bgColor),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = item.code,
-                    fontSize = 9.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
-                    color = textColor,
+                    color = Color(0xFF070B14),
                     textAlign = TextAlign.Center,
-                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false)
+                    )
                 )
             }
-            Spacer(modifier = Modifier.width(3.dp))
         }
     }
 }
 
 // ==============================================================================
-// 8. CONTENIDOS DE LAS PESTAÑAS (HUD QUANTUM)
+// 8. MÓDULOS DE ANÁLISIS DINÁMICOS
 // ==============================================================================
 
 @Composable
-fun SummaryTabContent(analysis: QuantumMatchAnalysis) {
-    val sum = analysis.bettingSummary
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF080D18), RoundedCornerShape(10.dp))
-            .padding(12.dp)
+fun MatchBettingSummaryView(summary: MatchBettingSummary) {
+    Surface(
+        color = Color(0xFF091120),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "RESUMEN DE APUESTA",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF00E5FF),
-                letterSpacing = 0.5.sp
-            )
-            Surface(
-                color = Color(0xFF10B981).copy(alpha = 0.15f),
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Text(
-                    text = "SCORE: ${sum.predictedScore}",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF10B981),
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Bloque de Selección Principal / Segura
-        Surface(
-            color = Color(0xFF0E1626),
-            border = BorderStroke(1.dp, Color(0xFF1E293B)),
-            shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "📋 RESUMEN PARA TU APUESTA",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 11.sp,
+                    color = Color(0xFF00E5FF)
+                )
+                Surface(
+                    color = Color(0xFF10B981).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
                     Text(
-                        text = sum.safePickTitle.uppercase(),
+                        text = "HOJA DE RUTA",
+                        color = Color(0xFF10B981),
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF64748B)
-                    )
-                    Text(
-                        text = sum.safePick,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFFF1F5F9)
-                    )
-                    Text(
-                        text = sum.safePickProb,
-                        fontSize = 10.sp,
-                        color = Color(0xFF10B981),
-                        fontWeight = FontWeight.SemiBold
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
-                Text(
-                    text = sum.safePickOdds,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF00E5FF)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Grid 2x2 para Valor en Córners, Jugador y Tarjetas
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SummaryMiniCard(
-                title = "VALOR CÓRNERS",
-                pick = sum.valuePick,
-                odds = sum.valuePickOdds,
-                modifier = Modifier.weight(1f)
-            )
-            SummaryMiniCard(
-                title = "DISPARO AL ARCO",
-                pick = sum.playerPick,
-                odds = sum.playerPickOdds,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Veredicto rápido analítico
-        Text(
-            text = "VEREDICTO CUÁNTICO",
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFFA855F7)
-        )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = sum.quickVerdict,
-            fontSize = 11.sp,
-            color = Color(0xFFCBD5E1),
-            lineHeight = 15.sp
-        )
-    }
-}
-
-@Composable
-fun SummaryMiniCard(title: String, pick: String, odds: String, modifier: Modifier = Modifier) {
-    Surface(
-        color = Color(0xFF0E1626),
-        border = BorderStroke(1.dp, Color(0xFF1A2538)),
-        shape = RoundedCornerShape(8.dp),
-        modifier = modifier
-    ) {
-        Column(modifier = Modifier.padding(8.dp)) {
-            Text(
-                text = title,
-                fontSize = 8.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF64748B)
-            )
-            Text(
-                text = pick,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFFF8FAFC),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = odds,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF10B981)
-            )
-        }
-    }
-}
-
-@Composable
-fun ParlayTabContent(analysis: QuantumMatchAnalysis) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF080D18), RoundedCornerShape(10.dp))
-            .padding(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "COMBINADA DEL ENCUENTRO",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFFA855F7),
-                    letterSpacing = 0.5.sp
-                )
-                Text(
-                    text = "${analysis.parlayLegs.size} SELECCIONES CORRELACIONADAS",
-                    fontSize = 9.sp,
-                    color = Color(0xFF64748B),
-                    fontWeight = FontWeight.Bold
-                )
             }
 
-            Surface(
-                color = Color(0xFFA855F7).copy(alpha = 0.2f),
-                border = BorderStroke(1.dp, Color(0xFFA855F7)),
-                shape = RoundedCornerShape(6.dp)
-            ) {
-                Text(
-                    text = analysis.parlayDisplayOdds,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFFF3E8FF),
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-        }
+            Spacer(modifier = Modifier.height(8.dp))
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Lista de patas de la combinada
-        analysis.parlayLegs.forEach { leg ->
-            Surface(
-                color = Color(0xFF0F172A),
-                shape = RoundedCornerShape(6.dp),
-                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+            // Apuesta Principal / Segura
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 3.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = leg.category,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color(0xFF00E5FF)
-                        )
-                        Text(
-                            text = leg.pick,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF8FAFC)
-                        )
-                    }
-
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = leg.displayOdds,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color(0xFF10B981)
-                        )
-                        Text(
-                            text = "${(leg.modelProb * 100).toInt()}% prob",
-                            fontSize = 9.sp,
-                            color = Color(0xFF64748B)
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            MetricPill(
-                title = "PROB CONJUNTA",
-                value = "${(analysis.jointParlayProb * 100).toInt()}%",
-                color = Color(0xFFA855F7)
-            )
-            MetricPill(
-                title = "STAKE RECOMENDADO",
-                value = "${String.format(Locale.US, "%.1f", analysis.kellyStakePercent)}%",
-                color = Color(0xFF00E5FF)
-            )
-            MetricPill(
-                title = "CUOTA TOTAL",
-                value = analysis.parlayDisplayOdds,
-                color = Color(0xFF10B981)
-            )
-        }
-    }
-}
-
-@Composable
-fun DoubleChanceTabContent(analysis: QuantumMatchAnalysis) {
-    val dc = analysis.doubleChanceAnalysis
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF080D18), RoundedCornerShape(10.dp))
-            .padding(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "DOBLE OPORTUNIDAD",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF00E5FF)
-            )
-            Surface(
-                color = Color(0xFF10B981).copy(alpha = 0.16f),
-                shape = RoundedCornerShape(4.dp)
+                    .padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = dc.confidenceBadge,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF10B981),
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    text = "🟢 ${summary.safePickTitle}:",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    fontWeight = FontWeight.Medium
                 )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = dc.pickTitle,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Black,
-            color = Color(0xFFF8FAFC)
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Text(
-            text = dc.analysisDescription,
-            fontSize = 11.sp,
-            color = Color(0xFF94A3B8),
-            lineHeight = 15.sp
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            MetricPill(
-                title = "CUOTA FINAL",
-                value = dc.displayOdds,
-                color = if (dc.isMarketOdds) Color(0xFF00E5FF) else Color(0xFF94A3B8)
-            )
-            MetricPill(
-                title = "PROBABILIDAD",
-                value = "${(dc.modelProb * 100).toInt()}%",
-                color = Color(0xFF10B981)
-            )
-            MetricPill(
-                title = "CUOTA JUSTA",
-                value = String.format(Locale.US, "%.2f", dc.fairOdds),
-                color = Color(0xFFA855F7)
-            )
-        }
-    }
-}
-
-@Composable
-fun CornersTabContent(analysis: QuantumMatchAnalysis) {
-    val corners = analysis.cornersAnalysis
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF080D18), RoundedCornerShape(10.dp))
-            .padding(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
                 Text(
-                    text = "CÓRNERS",
+                    text = "${summary.safePick} (${summary.safePickOdds})",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color(0xFF00E5FF)
-                )
-                Text(
-                    text = "${String.format(Locale.US, "%.1f", corners.expectedTotal)} CÓRNERS",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFFF1F5F9)
+                    color = Color(0xFF10B981)
                 )
             }
 
-            Surface(
-                color = Color(0xFF10B981).copy(alpha = 0.18f),
-                shape = RoundedCornerShape(6.dp)
+            // Apuesta de Valor (Córners)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${corners.recommendedPick} (${corners.displayOdds})",
+                    text = "🚩 Apuesta de Valor (Córners):",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "${summary.valuePick} (${summary.valuePickOdds})",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color(0xFF10B981),
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    color = Color(0xFF38BDF8)
                 )
             }
-        }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = "Local ~${String.format(Locale.US, "%.1f", corners.expectedHome)} | Visita ~${String.format(Locale.US, "%.1f", corners.expectedAway)} (Promedios Bzzoiro)",
-            fontSize = 10.sp,
-            color = Color(0xFF64748B)
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            MetricPill(
-                title = "+8.5 CÓRNERS",
-                value = "${(corners.probOver85 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", corners.fairOddsOver85)})",
-                color = if (corners.probOver85 >= 0.65) Color(0xFF10B981) else Color(0xFF94A3B8)
-            )
-            MetricPill(
-                title = "+9.5 CÓRNERS",
-                value = "${(corners.probOver95 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", corners.fairOddsOver95)})",
-                color = if (corners.probOver95 >= 0.55) Color(0xFF00E5FF) else Color(0xFF94A3B8)
-            )
-            MetricPill(
-                title = "+10.5 CÓRNERS",
-                value = "${(corners.probOver105 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", corners.fairOddsOver105)})",
-                color = Color(0xFF94A3B8)
-            )
-        }
-    }
-}
-
-@Composable
-fun CardsTabContent(analysis: QuantumMatchAnalysis) {
-    val cards = analysis.cardsAnalysis
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF080D18), RoundedCornerShape(10.dp))
-            .padding(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
+            // Prop de Jugador Real
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = "TARJETAS",
+                    text = "🎯 Prop de Jugador Real:",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "${summary.playerPick} (${summary.playerPickOdds})",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFFA855F7)
+                )
+            }
+
+            // Marcador Más Probable Poisson
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "⚽ Marcador Más Probable:",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = summary.predictedScore,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
                     color = Color(0xFFF59E0B)
                 )
-                Text(
-                    text = "${String.format(Locale.US, "%.1f", cards.expectedTotal)} TOTAL",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFFF1F5F9)
-                )
             }
 
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Veredicto Dinámico conciso
             Surface(
-                color = Color(0xFFF59E0B).copy(alpha = 0.18f),
-                shape = RoundedCornerShape(6.dp)
+                color = Color(0xFF0F1A2E),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "${cards.recommendedPick} (${cards.displayOdds})",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFFF59E0B),
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    text = "💡 Veredicto: ${summary.quickVerdict}",
+                    fontSize = 10.sp,
+                    color = Color(0xFFCBD5E1),
+                    lineHeight = 14.sp,
+                    modifier = Modifier.padding(8.dp)
                 )
             }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = "Amarillas ~${String.format(Locale.US, "%.1f", cards.expectedYellow)} | P(Roja): ${(cards.expectedRedProb * 100).toInt()}% | ${cards.frictionIndexText}",
-            fontSize = 10.sp,
-            color = Color(0xFF64748B)
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            MetricPill(
-                title = "+3.5 TARJETAS",
-                value = "${(cards.probOver35 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", cards.fairOddsOver35)})",
-                color = if (cards.probOver35 >= 0.65) Color(0xFF10B981) else Color(0xFF94A3B8)
-            )
-            MetricPill(
-                title = "+4.5 TARJETAS",
-                value = "${(cards.probOver45 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", cards.fairOddsOver45)})",
-                color = if (cards.probOver45 >= 0.50) Color(0xFFF59E0B) else Color(0xFF94A3B8)
-            )
-            MetricPill(
-                title = "FRICCIÓN",
-                value = cards.frictionIndexText,
-                color = Color(0xFF00E5FF)
-            )
         }
     }
 }
 
 @Composable
-fun PlayerShotsTabContent(analysis: QuantumMatchAnalysis) {
-    val props = analysis.playerShotProps
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF080D18), RoundedCornerShape(10.dp))
-            .padding(12.dp)
+fun MatchBetBuilderCardView(analysis: QuantumMatchAnalysis) {
+    Surface(
+        color = Color(0xFF0C0F1E),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0xFFA855F7).copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "REMATES Y TIROS AL ARCO (DELANTEROS REALES)",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF00E5FF)
-            )
-            Text(
-                text = "${props.size} JUGADORES",
-                fontSize = 9.sp,
-                color = Color(0xFF64748B),
-                fontWeight = FontWeight.Bold
-            )
-        }
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "⚡ COMBINADA DEL PARTIDO",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 11.sp,
+                    color = Color(0xFFA855F7)
+                )
 
-        Spacer(modifier = Modifier.height(10.dp))
+                if (analysis.parlayLegs.isNotEmpty()) {
+                    Surface(
+                        color = Color(0xFFA855F7).copy(alpha = 0.2f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "CUOTA: ${analysis.parlayDisplayOdds}",
+                            color = Color(0xFFA855F7),
+                            fontWeight = FontWeight.Black,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+            }
 
-        if (props.isEmpty()) {
-            Text(
-                text = "No hay datos de atacantes verificados para este encuentro en Bzzoiro.",
-                fontSize = 11.sp,
-                color = Color(0xFF64748B)
-            )
-        } else {
-            props.forEach { p ->
-                Surface(
-                    color = Color(0xFF0E1626),
-                    border = BorderStroke(1.dp, Color(0xFF1E293B)),
-                    shape = RoundedCornerShape(8.dp),
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (analysis.parlayLegs.isEmpty()) {
+                // Aviso matemático: no se fuerzan apuestas cuando las probabilidades no alcanzan el umbral de valor
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp)
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "No hay apuestas de valor suficiente para este partido",
+                            color = Color(0xFFF1F5F9),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Ninguna selección supera el umbral matemático de confianza (>55%). Protegemos tu bankroll evitando apuestas forzadas.",
+                            color = Color(0xFF64748B),
+                            fontSize = 10.sp,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
+            } else {
+                for ((index, leg) in analysis.parlayLegs.take(4).withIndex()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    text = p.fullName,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = Color(0xFFF1F5F9)
-                                )
-                                Text(
-                                    text = "${p.teamName} • ${p.position}",
-                                    fontSize = 9.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            Text(
-                                text = p.displayOdds,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Black,
-                                color = Color(0xFF10B981)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
                         ) {
                             Text(
-                                text = "Tiro al Arco: ~${String.format(Locale.US, "%.1f", p.shotsOnTargetLambda)} (${p.pickOnTarget}: ${(p.probOnTarget * 100).toInt()}%)",
-                                fontSize = 10.sp,
+                                text = "${index + 1}. ",
                                 color = Color(0xFF00E5FF),
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                text = "${leg.category}: ${leg.pick}",
+                                fontSize = 11.sp,
+                                color = Color(0xFFF1F5F9),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
+
+                        Text(
+                            text = "${(leg.modelProb * 100).toInt()}% • ${leg.displayOdds}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    MetricPill(title = "PROB CONJUNTA", value = "${(analysis.jointParlayProb * 100).toInt()}%", color = Color(0xFF00E5FF))
+                    MetricPill(title = "CUOTA TOTAL", value = analysis.parlayDisplayOdds, color = Color(0xFFA855F7))
+                    MetricPill(title = "STAKE RECOMENDADO", value = "${String.format(Locale.US, "%.1f", analysis.kellyStakePercent)}%", color = Color(0xFFF59E0B))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DoubleChanceModuleView(dc: DoubleChanceFavoriteAnalysis) {
+    Surface(
+        color = Color(0xFF070D18),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    color = Color(0xFF00E5FF).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        text = "FAVORITO O EMPATE: ${dc.pickCode}",
+                        color = Color(0xFF00E5FF),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+
+                Surface(
+                    color = Color(0xFF10B981).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        text = dc.confidenceBadge,
+                        color = Color(0xFF10B981),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = dc.pickTitle,
+                fontWeight = FontWeight.Black,
+                fontSize = 14.sp,
+                color = Color(0xFFF8FAFC)
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = dc.analysisDescription,
+                fontSize = 11.sp,
+                color = Color(0xFF94A3B8),
+                lineHeight = 15.sp
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                MetricPill(title = "PROB. MODELO", value = "${(dc.modelProb * 100).toInt()}%", color = Color(0xFF00E5FF))
+                MetricPill(title = "CUOTA JUSTA", value = String.format(Locale.US, "%.2f", dc.fairOdds), color = Color(0xFFA855F7))
+                MetricPill(title = if (dc.isMarketOdds) "CUOTA MERCADO" else "CUOTA ESTIMADA", value = dc.displayOdds, color = Color(0xFF10B981))
+                MetricPill(
+                    title = "VENTAJA (+EV)",
+                    value = if (dc.expectedValue != null) "+${(dc.expectedValue * 100).toInt()}%" else "Base",
+                    color = Color(0xFFF59E0B)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CornersAndCardsModuleView(corners: CornersAnalysis, cards: CardsAnalysis) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            color = Color(0xFF08121E),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, Color(0xFF0284C7).copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🚩 CÓRNERS (REAL BZZOIRO)",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 11.sp,
+                        color = Color(0xFF38BDF8)
+                    )
+                    Text(
+                        text = "${String.format(Locale.US, "%.1f", corners.expectedTotal)} CÓRNERS",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 11.sp,
+                        color = Color(0xFFF8FAFC)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Local ~${String.format(Locale.US, "%.1f", corners.expectedHome)} | Visita ~${String.format(Locale.US, "%.1f", corners.expectedAway)}",
+                        fontSize = 10.sp,
+                        color = Color(0xFF94A3B8)
+                    )
+                    Text(
+                        text = "Pick: ${corners.recommendedPick} (${corners.displayOdds})",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF10B981)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    MetricPill(title = "+8.5 CÓRNERS", value = "${(corners.probOver85 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", corners.fairOddsOver85)})", color = Color(0xFF38BDF8))
+                    MetricPill(title = "+9.5 CÓRNERS", value = "${(corners.probOver95 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", corners.fairOddsOver95)})", color = Color(0xFF0284C7))
+                    MetricPill(title = "+10.5 CÓRNERS", value = "${(corners.probOver105 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", corners.fairOddsOver105)})", color = Color(0xFFA855F7))
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Surface(
+            color = Color(0xFF160F1A),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🟨 TARJETAS (DISCIPLINA)",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 11.sp,
+                        color = Color(0xFFF59E0B)
+                    )
+                    Text(
+                        text = "${String.format(Locale.US, "%.1f", cards.expectedTotal)} TOTAL",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 11.sp,
+                        color = Color(0xFFF8FAFC)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Amarillas ~${String.format(Locale.US, "%.1f", cards.expectedYellow)} | P(Roja): ${(cards.expectedRedProb * 100).toInt()}%",
+                        fontSize = 10.sp,
+                        color = Color(0xFF94A3B8)
+                    )
+                    Text(
+                        text = cards.frictionIndex,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFF59E0B)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    MetricPill(title = "+3.5 TARJETAS", value = "${(cards.probOver35 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", cards.fairOddsOver35)})", color = Color(0xFFF59E0B))
+                    MetricPill(title = "+4.5 TARJETAS", value = "${(cards.probOver45 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", cards.fairOddsOver45)})", color = Color(0xFFEF4444))
+                    MetricPill(title = "PICK SUGERIDO", value = cards.recommendedPick, color = Color(0xFF10B981))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlayerShotsModuleView(players: List<PlayerShotProp>) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        for (p in players) {
+            Surface(
+                color = Color(0xFF0B1424),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = p.fullName,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 13.sp,
+                                color = Color(0xFFF8FAFC)
+                            )
+                            Text(
+                                text = "${p.teamName} • ${p.rolePosition}",
+                                fontSize = 10.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+
+                        Surface(
+                            color = Color(0xFF00E5FF).copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = "${p.pickOnTarget} (${p.displayOdds})",
+                                color = Color(0xFF00E5FF),
+                                fontWeight = FontWeight.Black,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
                         Text(
                             text = "Remates: ~${String.format(Locale.US, "%.1f", p.totalShotsLambda)} (${p.pickTotalShots}: ${(p.probTotalShots * 100).toInt()}%)",
                             fontSize = 10.sp,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF64748B)
+                        )
+                        Text(
+                            text = "P(Al Arco): ${(p.probOnTarget * 100).toInt()}%",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF10B981)
                         )
                     }
                 }
@@ -3004,163 +3056,64 @@ fun PlayerShotsTabContent(analysis: QuantumMatchAnalysis) {
 }
 
 @Composable
-fun Poisson1X2TabContent(analysis: QuantumMatchAnalysis) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF080D18), RoundedCornerShape(10.dp))
-            .padding(12.dp)
+fun Poisson1X2ModuleView(analysis: QuantumMatchAnalysis) {
+    Surface(
+        color = Color(0xFF08101E),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Text(
-                text = "MATRIZ POISSON BIVARIADA",
-                fontSize = 11.sp,
+                text = "POISSON 1X2 & MARCADOR",
                 fontWeight = FontWeight.Black,
-                color = Color(0xFF00E5FF)
+                fontSize = 11.sp,
+                color = Color(0xFF64748B)
             )
-            Surface(
-                color = Color(0xFF00E5FF).copy(alpha = 0.15f),
-                shape = RoundedCornerShape(4.dp)
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "EXP: ${String.format(Locale.US, "%.2f", analysis.lambdaHome)} - ${String.format(Locale.US, "%.2f", analysis.lambdaAway)}",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF00E5FF),
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                )
+                MetricPill(title = "LOCAL (1)", value = "${(analysis.probHome * 100).toInt()}%", color = Color(0xFF00E5FF))
+                MetricPill(title = "EMPATE (X)", value = "${(analysis.probDraw * 100).toInt()}%", color = Color(0xFFF59E0B))
+                MetricPill(title = "VISITA (2)", value = "${(analysis.probAway * 100).toInt()}%", color = Color(0xFFA855F7))
+                MetricPill(title = "MARCADOR", value = "${analysis.mostProbableScore} (${(analysis.mostProbableScoreProb * 100).toInt()}%)", color = Color(0xFF10B981))
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                MetricPill(title = "+1.5 GOLES", value = "${(analysis.probOver15 * 100).toInt()}%", color = Color(0xFF00E5FF))
+                MetricPill(title = "+2.5 GOLES", value = "${(analysis.probOver25 * 100).toInt()}%", color = Color(0xFF0284C7))
+                MetricPill(title = "AMBOS MARCAN", value = "${(analysis.probBTTS * 100).toInt()}%", color = Color(0xFF10B981))
+                MetricPill(title = "H2H TOTAL", value = "${analysis.event.h2hTotalMatches} PJ", color = Color(0xFF64748B))
             }
         }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Probabilidades 1X2
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            PoissonOutcomeCard(
-                label = "LOCAL",
-                team = analysis.event.homeTeam,
-                prob = analysis.probHome,
-                marketOdds = analysis.odds.home1x2,
-                modifier = Modifier.weight(1f)
-            )
-            PoissonOutcomeCard(
-                label = "EMPATE",
-                team = "X",
-                prob = analysis.probDraw,
-                marketOdds = analysis.odds.draw1x2,
-                modifier = Modifier.weight(1f)
-            )
-            PoissonOutcomeCard(
-                label = "VISITA",
-                team = analysis.event.awayTeam,
-                prob = analysis.probAway,
-                marketOdds = analysis.odds.away1x2,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Métricas de Goles Adicionales
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            MetricPill(
-                title = "+1.5 GOLES",
-                value = "${(analysis.probOver15 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", 1.0 / analysis.probOver15)})",
-                color = if (analysis.probOver15 >= 0.70) Color(0xFF10B981) else Color(0xFF94A3B8)
-            )
-            MetricPill(
-                title = "+2.5 GOLES",
-                value = "${(analysis.probOver25 * 100).toInt()}% (@${String.format(Locale.US, "%.2f", 1.0 / analysis.probOver25)})",
-                color = if (analysis.probOver25 >= 0.50) Color(0xFF00E5FF) else Color(0xFF94A3B8)
-            )
-            MetricPill(
-                title = "AMBOS ANOTAN",
-                value = "${(analysis.probBTTS * 100).toInt()}% (@${String.format(Locale.US, "%.2f", 1.0 / analysis.probBTTS)})",
-                color = if (analysis.probBTTS >= 0.50) Color(0xFFA855F7) else Color(0xFF94A3B8)
-            )
-        }
     }
 }
 
 @Composable
-fun PoissonOutcomeCard(
-    label: String,
-    team: String,
-    prob: Double,
-    marketOdds: Double?,
-    modifier: Modifier = Modifier
-) {
-    val fairOdds = 1.0 / prob.coerceAtLeast(0.01)
-    Surface(
-        color = Color(0xFF0E1626),
-        border = BorderStroke(1.dp, Color(0xFF1E293B)),
-        shape = RoundedCornerShape(8.dp),
-        modifier = modifier
-    ) {
-        Column(
-            modifier = Modifier.padding(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = label,
-                fontSize = 8.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF64748B)
-            )
-            Text(
-                text = "${(prob * 100).toInt()}%",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFFF1F5F9)
-            )
-            Text(
-                text = if (marketOdds != null && marketOdds > 1.01) {
-                    String.format(Locale.US, "@%.2f", marketOdds)
-                } else {
-                    String.format(Locale.US, "@%.2f (Calc)", fairOdds)
-                },
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Black,
-                color = if (marketOdds != null) Color(0xFF00E5FF) else Color(0xFF94A3B8)
-            )
-        }
-    }
-}
-
-@Composable
-fun MetricPill(title: String, value: String, color: Color = Color(0xFF00E5FF)) {
-    Surface(
-        color = Color(0xFF0E1626),
-        border = BorderStroke(1.dp, Color(0xFF1E293B)),
-        shape = RoundedCornerShape(6.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = title,
-                fontSize = 8.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF64748B)
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = value,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Black,
-                color = color
-            )
-        }
+fun MetricPill(title: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = title,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF64748B),
+            letterSpacing = 0.4.sp
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = value,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Black,
+            color = color
+        )
     }
 }

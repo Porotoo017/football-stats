@@ -114,72 +114,12 @@ fun extractLeagueName(obj: JSONObject): String {
 }
 
 fun isWhitelistedLeague(leagueId: Long, leagueName: String = ""): Boolean {
-    if (WHITELISTED_LEAGUE_IDS.contains(leagueId)) return true
-    val name = leagueName.trim()
-    if (name.isEmpty()) return false
-
-    // Copa Libertadores
-    if (name.contains("libertadores", ignoreCase = true)) return true
-
-    // Copa Sudamericana
-    if (name.contains("sudamericana", ignoreCase = true)) return true
-
-    // Primera Nacional (Nacional B de Argentina)
-    if (name.contains("primera nacional", ignoreCase = true) ||
-        name.contains("nacional b", ignoreCase = true) ||
-        name.contains("primera b nacional", ignoreCase = true)) return true
-
-    // UEFA Champions League
-    if (name.contains("uefa champions", ignoreCase = true) ||
-        name.contains("champions", ignoreCase = true)) {
-        if (!name.contains("caf", ignoreCase = true) &&
-            !name.contains("afc", ignoreCase = true) &&
-            !name.contains("u19", ignoreCase = true) &&
-            !name.contains("women", ignoreCase = true) &&
-            !name.contains("femen", ignoreCase = true)) return true
-    }
-
-    // UEFA Europa League
-    if (name.contains("europa league", ignoreCase = true) ||
-        name.contains("uefa europa", ignoreCase = true) ||
-        (name.contains("europa", ignoreCase = true) &&
-         !name.contains("conference", ignoreCase = true) &&
-         !name.contains("super cup", ignoreCase = true))) return true
-
-    // Liga Profesional Argentina
-    if (name.contains("liga profesional", ignoreCase = true) ||
-        (name.contains("primera divisi", ignoreCase = true) && name.contains("argentina", ignoreCase = true))) return true
-
-    // MLS (EE.UU.)
-    if (name.equals("mls", ignoreCase = true) || name.contains("major league soccer", ignoreCase = true)) return true
-
-    // LaLiga (España)
-    if ((name.equals("laliga", ignoreCase = true) || name.contains("la liga", ignoreCase = true) ||
-         name.contains("primera división", ignoreCase = true) || name.contains("primera division", ignoreCase = true)) &&
-        !name.contains("femen", ignoreCase = true) && !name.contains("segunda", ignoreCase = true) && !name.contains("argentina", ignoreCase = true)) return true
-
-    // Bundesliga (Alemania)
-    if (name.contains("bundesliga", ignoreCase = true) && !name.contains("2.") && !name.contains("austrian", ignoreCase = true)) return true
-
-    // Eredivisie (Países Bajos)
-    if (name.contains("eredivisie", ignoreCase = true) && !name.contains("eerste", ignoreCase = true)) return true
-
-    // Ligue 1 (Francia)
-    if (name.contains("ligue 1", ignoreCase = true) && !name.contains("túnez", ignoreCase = true) && !name.contains("ligue 2", ignoreCase = true)) return true
-
-    // Serie A (Italia)
-    if (name.contains("serie a", ignoreCase = true) && !name.contains("serie b", ignoreCase = true) && !name.contains("serie c", ignoreCase = true) && !name.contains("brasil", ignoreCase = true)) return true
-
-    // Brasileirão Serie A (Brasil)
-    if ((name.contains("brasileir", ignoreCase = true) || name.contains("brasileirao", ignoreCase = true)) && !name.contains("serie b", ignoreCase = true)) return true
-
-    // Primeira Liga (Portugal)
-    if ((name.contains("liga portugal", ignoreCase = true) || name.contains("primeira liga", ignoreCase = true)) && !name.contains("liga 2", ignoreCase = true) && !name.contains("portugal 2", ignoreCase = true)) return true
-
-    // Premier League (Inglaterra)
-    if (name.contains("premier league", ignoreCase = true) && !name.contains("nigeria", ignoreCase = true)) return true
-
-    return false
+    // ==========================================================================
+    // MODO DIAGNÓSTICO TEMPORAL ACTIVADO:
+    // Retorna true para recibir y mostrar TODOS los partidos devueltos por Bzzoiro.
+    // Permite al usuario inspeccionar en la UI los ID y nombres reales de las ligas.
+    // ==========================================================================
+    return true
 }
 
 fun resolveLeagueName(rawObj: JSONObject?, leagueId: Long): String {
@@ -224,7 +164,7 @@ fun resolveLeagueName(rawObj: JSONObject?, leagueId: Long): String {
     }
 
     if (extractedName.isNotEmpty() && !extractedName.contains("#")) return extractedName
-    return LEAGUES_MAP[leagueId] ?: "Liga Oficial"
+    return LEAGUES_MAP[leagueId] ?: if (extractedName.isNotEmpty()) extractedName else "Liga Oficial"
 }
 
 // ==============================================================================
@@ -672,7 +612,7 @@ object BzzoiroApiClient {
     fun parseApexEventFromJson(
         obj: JSONObject,
         nowLocalLdt: LocalDateTime = LocalDateTime.now(),
-        limit24h: LocalDateTime = LocalDateTime.now().plusHours(24)
+        limitTime: LocalDateTime = LocalDateTime.now().plusHours(48)
     ): ApexEvent {
         val id = obj.optLong("id")
         val leagueId = obj.optLong("league_id")
@@ -696,15 +636,17 @@ object BzzoiroApiClient {
         val isNext24Hours = when {
             isLive -> true
             status == "finished" -> false
-            matchLocalLdt != null -> !matchLocalLdt.isBefore(nowLocalLdt.minusMinutes(105)) && !matchLocalLdt.isAfter(limit24h)
-            else -> false
+            // Ventana ampliada: desde 2 horas antes de ahora hasta 48 horas en adelante
+            matchLocalLdt != null -> !matchLocalLdt.isBefore(nowLocalLdt.minusHours(2)) && !matchLocalLdt.isAfter(limitTime)
+            // Si la fecha del partido no se puede parsear, NO se oculta para no perder partidos
+            else -> true
         }
 
         val timeFormatted = when {
             isLive -> "EN VIVO • ${curMin ?: 45}'"
             status == "finished" -> "FINALIZADO"
             matchLocal != null -> matchLocal.format(DateTimeFormatter.ofPattern("dd/MM • HH:mm 'hs'", Locale.getDefault()))
-            else -> "A CONFIRMAR"
+            else -> "Fecha por confirmar"
         }
 
         val resolvedLeagueName = resolveLeagueName(obj, leagueId)
@@ -746,7 +688,7 @@ object BzzoiroApiClient {
         val seenIds = mutableSetOf<Long>()
         val nowUtc = ZonedDateTime.now(ZoneId.of("UTC"))
         val nowLocalLdt = LocalDateTime.now()
-        val limit24h = nowLocalLdt.plusHours(24)
+        val limit48h = nowLocalLdt.plusHours(48)
 
         for (dayOffset in -1..daysAhead) {
             val dStr = nowUtc.plusDays(dayOffset.toLong()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US))
@@ -771,7 +713,7 @@ object BzzoiroApiClient {
                             val id = obj.optLong("id")
                             if (seenIds.contains(id)) continue
                             seenIds.add(id)
-                            list.add(parseApexEventFromJson(obj, nowLocalLdt, limit24h))
+                            list.add(parseApexEventFromJson(obj, nowLocalLdt, limit48h))
                         }
                         val nextUrl = root.optString("next", "")
                         if (nextUrl.isNotEmpty() && countThisPage == limitPerPage) offset += limitPerPage else hasMore = false
@@ -799,7 +741,7 @@ object BzzoiroApiClient {
                             val id = obj.optLong("id")
                             if (seenIds.contains(id)) continue
                             seenIds.add(id)
-                            list.add(parseApexEventFromJson(obj, nowLocalLdt, limit24h))
+                            list.add(parseApexEventFromJson(obj, nowLocalLdt, limit48h))
                         }
                         val nextUrl = root.optString("next", "")
                         if (nextUrl.isNotEmpty() && countThisPage == 100) offset += 100 else hasMore = false
@@ -818,7 +760,7 @@ object BzzoiroApiClient {
     suspend fun fetchEvents(dateFrom: String, dateTo: String, limit: Int = 100): List<ApexEvent> = withContext(Dispatchers.IO) {
         val list = mutableListOf<ApexEvent>()
         val nowLocalLdt = LocalDateTime.now()
-        val limit24h = nowLocalLdt.plusHours(24)
+        val limit48h = nowLocalLdt.plusHours(48)
         try {
             val conn = openConnection("/events/?date_from=$dateFrom&date_to=$dateTo&limit=$limit")
             if (conn.responseCode == 200) {
@@ -829,7 +771,7 @@ object BzzoiroApiClient {
                     val lid = obj.optLong("league_id")
                     val lName = extractLeagueName(obj)
                     if (!isWhitelistedLeague(lid, lName)) continue
-                    list.add(parseApexEventFromJson(obj, nowLocalLdt, limit24h))
+                    list.add(parseApexEventFromJson(obj, nowLocalLdt, limit48h))
                 }
             }
             conn.disconnect()
@@ -1314,14 +1256,15 @@ class FootballStatsViewModel : ViewModel() {
     val filteredAnalyses: List<QuantumMatchAnalysis>
         get() {
             val nowLdt = LocalDateTime.now()
-            val limit24h = nowLdt.plusHours(24)
+            val limit48h = nowLdt.plusHours(48)
+            val minTime = nowLdt.minusHours(2)
             val list = allAnalyses.filter { analysis ->
                 val matchLdt = analysis.event.eventDateZdt?.toLocalDateTime()
                 val matchesTime = if (onlyNext24Hours) {
                     if (analysis.event.status == "finished") false
                     else if (analysis.event.status == "inprogress" || analysis.event.currentMinute != null) true
-                    else if (matchLdt != null) !matchLdt.isBefore(nowLdt.minusMinutes(105)) && !matchLdt.isAfter(limit24h)
-                    else false
+                    else if (matchLdt != null) !matchLdt.isBefore(minTime) && !matchLdt.isAfter(limit48h)
+                    else true // Si no hay fecha parseada, NO ocultar
                 } else true
                 val matchesLeague = if (selectedLeagueFilter == "ALL") true else analysis.event.leagueId.toString() == selectedLeagueFilter
                 matchesTime && matchesLeague
@@ -1354,7 +1297,7 @@ class FootballStatsViewModel : ViewModel() {
             try {
                 val rawEvents = BzzoiroApiClient.fetchUpcomingEvents(daysAhead = 3, limitPerPage = 100)
                 if (rawEvents.isEmpty()) {
-                    errorMessage = "No se encontraron partidos programados en la lista blanca de ligas."
+                    errorMessage = "No se encontraron partidos devueltos por Bzzoiro para el rango consultado."
                 } else {
                     val analysesList = coroutineScope {
                         rawEvents.map { ev ->
@@ -1517,7 +1460,7 @@ fun TimeWindowSelectorRow(onlyNext24h: Boolean, onSelectWindow: (Boolean) -> Uni
     Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(
             selected = onlyNext24h, onClick = { onSelectWindow(true) },
-            label = { Text("PRÓXIMAS 24H", fontWeight = FontWeight.Bold, fontSize = 11.sp) },
+            label = { Text("PRÓXIMAS 48H", fontWeight = FontWeight.Bold, fontSize = 11.sp) },
             colors = FilterChipDefaults.filterChipColors(
                 selectedContainerColor = Color(0xFF00E5FF), selectedLabelColor = Color.Black,
                 containerColor = Color(0xFF141E33), labelColor = Color(0xFF94A3B8)
@@ -1575,7 +1518,29 @@ fun QuantumMatchCard(analysis: QuantumMatchAnalysis) {
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(ev.leagueName.uppercase(Locale.ROOT), color = Color(0xFF00E5FF), fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f, fill = false)) {
+                    Text(
+                        text = ev.leagueName.uppercase(Locale.ROOT),
+                        color = Color(0xFF00E5FF),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(shape = RoundedCornerShape(4.dp), color = Color(0xFF141E33)) {
+                        Text(
+                            text = "ID: ${ev.leagueId}",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = if (ev.status == "inprogress") Color(0x33EF4444) else Color(0xFF141E33),

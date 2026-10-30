@@ -46,7 +46,7 @@ import kotlin.math.*
 // ==============================================================================
 // 1. CONFIGURACIÓN WHITELABEL Y LISTA BLANCA DE LIGAS (BZZOIRO DATA API)
 // ==============================================================================
-var bzzoiroApiKey: String = "9665517ed1732bad524c3730e18cd9d90cc1d13f"
+var bzzoiroApiKey: String = "196b5da801d2a96f72b4e69ed0f4a430b8b25d99"
 const val BZZOIRO_BASE_URL: String = "https://sports.bzzoiro.com/api/v2"
 
 val WHITELISTED_LEAGUE_IDS: Set<Long> = setOf(

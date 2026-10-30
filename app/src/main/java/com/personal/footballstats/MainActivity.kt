@@ -85,61 +85,127 @@ val LEAGUES_MAP: Map<Long, String> = mapOf(
 
 val PRIORITY_LEAGUE_ORDER = listOf(85L, 18L, 1L, 3L, 4L, 5L, 6L, 9L, 10L, 2L, 7L, 8L, 32L, 33L)
 
+fun extractLeagueName(obj: JSONObject): String {
+    val lObj = obj.optJSONObject("league")
+    if (lObj != null) {
+        val n = lObj.optString("name", "").trim()
+        if (n.isNotEmpty()) return n
+    }
+    val directLeague = obj.optString("league_name", "").trim()
+    if (directLeague.isNotEmpty()) return directLeague
+
+    val leagueStr = obj.optString("league", "").trim()
+    if (leagueStr.isNotEmpty() && !leagueStr.startsWith("{") && !leagueStr.matches(Regex("^\\d+$"))) return leagueStr
+
+    val tObj = obj.optJSONObject("tournament")
+    if (tObj != null) {
+        val tn = tObj.optString("name", "").trim()
+        if (tn.isNotEmpty()) return tn
+    }
+    val tName = obj.optString("tournament_name", "").trim()
+    if (tName.isNotEmpty()) return tName
+
+    val cObj = obj.optJSONObject("competition")
+    if (cObj != null) {
+        val cn = cObj.optString("name", "").trim()
+        if (cn.isNotEmpty()) return cn
+    }
+    return obj.optString("competition_name", "").trim()
+}
+
 fun isWhitelistedLeague(leagueId: Long, leagueName: String = ""): Boolean {
     if (WHITELISTED_LEAGUE_IDS.contains(leagueId)) return true
-    val l = leagueName.lowercase(Locale.ROOT).trim()
-    if (l.isEmpty()) return false
+    val name = leagueName.trim()
+    if (name.isEmpty()) return false
 
-    // Copa Libertadores (múltiples validaciones)
-    if (l.contains("libertadores") || l.contains("conmebol libertadores") || l.contains("copa libertadores")) return true
+    // Copa Libertadores
+    if (name.contains("libertadores", ignoreCase = true)) return true
 
-    // Copa Sudamericana (múltiples validaciones)
-    if (l.contains("sudamericana") || l.contains("conmebol sudamericana") || l.contains("copa sudamericana")) return true
+    // Copa Sudamericana
+    if (name.contains("sudamericana", ignoreCase = true)) return true
 
     // Primera Nacional (Nacional B de Argentina)
-    if (l.contains("primera nacional") || l.contains("primera b nacional") || l.contains("nacional b")) return true
+    if (name.contains("primera nacional", ignoreCase = true) ||
+        name.contains("nacional b", ignoreCase = true) ||
+        name.contains("primera b nacional", ignoreCase = true)) return true
 
     // UEFA Champions League
-    if ((l.contains("champions") || l.contains("uefa champions") || l.contains("champions league")) &&
-        !l.contains("caf") && !l.contains("afc") && !l.contains("u19")) return true
+    if (name.contains("uefa champions", ignoreCase = true) ||
+        name.contains("champions", ignoreCase = true)) {
+        if (!name.contains("caf", ignoreCase = true) &&
+            !name.contains("afc", ignoreCase = true) &&
+            !name.contains("u19", ignoreCase = true) &&
+            !name.contains("women", ignoreCase = true) &&
+            !name.contains("femen", ignoreCase = true)) return true
+    }
 
     // UEFA Europa League
-    if (l.contains("europa league") || l.contains("uefa europa") || (l.contains("europa") && !l.contains("conference") && !l.contains("super cup"))) return true
+    if (name.contains("europa league", ignoreCase = true) ||
+        name.contains("uefa europa", ignoreCase = true) ||
+        (name.contains("europa", ignoreCase = true) &&
+         !name.contains("conference", ignoreCase = true) &&
+         !name.contains("super cup", ignoreCase = true))) return true
 
     // Liga Profesional Argentina
-    if (l.contains("liga profesional") || (l.contains("primera divisi") && l.contains("argentina"))) return true
+    if (name.contains("liga profesional", ignoreCase = true) ||
+        (name.contains("primera divisi", ignoreCase = true) && name.contains("argentina", ignoreCase = true))) return true
 
     // MLS (EE.UU.)
-    if (l == "mls" || l.contains("major league soccer")) return true
+    if (name.equals("mls", ignoreCase = true) || name.contains("major league soccer", ignoreCase = true)) return true
 
     // LaLiga (España)
-    if ((l == "laliga" || l == "la liga" || l.contains("primera división")) && !l.contains("femenina") && !l.contains("segunda") && !l.contains("argentina")) return true
+    if ((name.equals("laliga", ignoreCase = true) || name.contains("la liga", ignoreCase = true) ||
+         name.contains("primera división", ignoreCase = true) || name.contains("primera division", ignoreCase = true)) &&
+        !name.contains("femen", ignoreCase = true) && !name.contains("segunda", ignoreCase = true) && !name.contains("argentina", ignoreCase = true)) return true
 
     // Bundesliga (Alemania)
-    if (l.contains("bundesliga") && !l.contains("2.") && !l.contains("austrian")) return true
+    if (name.contains("bundesliga", ignoreCase = true) && !name.contains("2.") && !name.contains("austrian", ignoreCase = true)) return true
 
     // Eredivisie (Países Bajos)
-    if (l.contains("eredivisie") && !l.contains("eerste")) return true
+    if (name.contains("eredivisie", ignoreCase = true) && !name.contains("eerste", ignoreCase = true)) return true
 
     // Ligue 1 (Francia)
-    if (l.contains("ligue 1") && !l.contains("túnez") && !l.contains("ligue 2")) return true
+    if (name.contains("ligue 1", ignoreCase = true) && !name.contains("túnez", ignoreCase = true) && !name.contains("ligue 2", ignoreCase = true)) return true
 
     // Serie A (Italia)
-    if (l.contains("serie a") && !l.contains("serie b") && !l.contains("serie c") && !l.contains("brasil")) return true
+    if (name.contains("serie a", ignoreCase = true) && !name.contains("serie b", ignoreCase = true) && !name.contains("serie c", ignoreCase = true) && !name.contains("brasil", ignoreCase = true)) return true
 
     // Brasileirão Serie A (Brasil)
-    if (l.contains("brasileir") && !l.contains("serie b")) return true
+    if ((name.contains("brasileir", ignoreCase = true) || name.contains("brasileirao", ignoreCase = true)) && !name.contains("serie b", ignoreCase = true)) return true
 
     // Primeira Liga (Portugal)
-    if ((l.contains("liga portugal") || l.contains("primeira liga")) && !l.contains("liga 2") && !l.contains("portugal 2")) return true
+    if ((name.contains("liga portugal", ignoreCase = true) || name.contains("primeira liga", ignoreCase = true)) && !name.contains("liga 2", ignoreCase = true) && !name.contains("portugal 2", ignoreCase = true)) return true
 
     // Premier League (Inglaterra)
-    if (l.contains("premier league") && !l.contains("nigeria")) return true
+    if (name.contains("premier league", ignoreCase = true) && !name.contains("nigeria", ignoreCase = true)) return true
 
     return false
 }
 
-fun resolveLeagueName(leagueObj: JSONObject?, leagueId: Long): String {
+fun resolveLeagueName(rawObj: JSONObject?, leagueId: Long): String {
+    val extractedName = if (rawObj != null) extractLeagueName(rawObj) else ""
+    val nameToCheck = extractedName.ifEmpty { LEAGUES_MAP[leagueId] ?: "" }
+
+    if (nameToCheck.contains("libertadores", ignoreCase = true)) return "Copa Libertadores"
+    if (nameToCheck.contains("sudamericana", ignoreCase = true)) return "Copa Sudamericana"
+    if (nameToCheck.contains("primera nacional", ignoreCase = true) ||
+        nameToCheck.contains("nacional b", ignoreCase = true) ||
+        nameToCheck.contains("primera b nacional", ignoreCase = true)) return "Primera Nacional (Argentina)"
+    if (nameToCheck.contains("uefa champions", ignoreCase = true) || nameToCheck.contains("champions", ignoreCase = true)) return "UEFA Champions League"
+    if (nameToCheck.contains("europa league", ignoreCase = true) || nameToCheck.contains("uefa europa", ignoreCase = true) ||
+        (nameToCheck.contains("europa", ignoreCase = true) && !nameToCheck.contains("conference", ignoreCase = true))) return "UEFA Europa League"
+    if (nameToCheck.contains("liga profesional", ignoreCase = true) ||
+        (nameToCheck.contains("primera", ignoreCase = true) && nameToCheck.contains("argentina", ignoreCase = true))) return "Liga Profesional (Argentina)"
+    if (nameToCheck.contains("laliga", ignoreCase = true) || nameToCheck.contains("la liga", ignoreCase = true)) return "LaLiga (España)"
+    if (nameToCheck.contains("premier league", ignoreCase = true)) return "Premier League (Inglaterra)"
+    if (nameToCheck.contains("bundesliga", ignoreCase = true)) return "Bundesliga (Alemania)"
+    if (nameToCheck.contains("serie a", ignoreCase = true) && !nameToCheck.contains("brasil", ignoreCase = true)) return "Serie A (Italia)"
+    if (nameToCheck.contains("ligue 1", ignoreCase = true)) return "Ligue 1 (Francia)"
+    if (nameToCheck.contains("eredivisie", ignoreCase = true)) return "Eredivisie (Países Bajos)"
+    if (nameToCheck.contains("brasileir", ignoreCase = true)) return "Brasileirão Serie A (Brasil)"
+    if (nameToCheck.contains("primeira liga", ignoreCase = true) || nameToCheck.contains("liga portugal", ignoreCase = true)) return "Primeira Liga (Portugal)"
+    if (nameToCheck.contains("major league soccer", ignoreCase = true) || nameToCheck.equals("mls", ignoreCase = true)) return "MLS (EE.UU.)"
+
     when (leagueId) {
         85L -> return "Liga Profesional (Argentina)"
         18L -> return "MLS (EE.UU.)"
@@ -156,25 +222,8 @@ fun resolveLeagueName(leagueObj: JSONObject?, leagueId: Long): String {
         33L -> return "Copa Sudamericana"
         1L -> return "Premier League (Inglaterra)"
     }
-    if (leagueObj != null) {
-        val n = leagueObj.optString("name", "").trim()
-        val l = n.lowercase(Locale.ROOT)
-        if (l.contains("primera nacional") || l.contains("primera b nacional") || l.contains("nacional b")) return "Primera Nacional (Argentina)"
-        if (l.contains("libertadores") || l.contains("conmebol libertadores")) return "Copa Libertadores"
-        if (l.contains("sudamericana") || l.contains("conmebol sudamericana")) return "Copa Sudamericana"
-        if (l.contains("europa league") || l.contains("uefa europa") || l.contains("europa")) return "UEFA Europa League"
-        if (l.contains("champions") || l.contains("uefa champions")) return "UEFA Champions League"
-        if (l.contains("liga profesional")) return "Liga Profesional (Argentina)"
-        if (l.contains("laliga") || l.contains("la liga")) return "LaLiga (España)"
-        if (l.contains("bundesliga")) return "Bundesliga (Alemania)"
-        if (l.contains("eredivisie")) return "Eredivisie (Países Bajos)"
-        if (l.contains("ligue 1")) return "Ligue 1 (Francia)"
-        if (l.contains("serie a") && !l.contains("brasil")) return "Serie A (Italia)"
-        if (l.contains("brasileir")) return "Brasileirão Serie A (Brasil)"
-        if (l.contains("liga portugal") || l.contains("primeira liga")) return "Primeira Liga (Portugal)"
-        if (l.contains("premier league")) return "Premier League (Inglaterra)"
-        if (n.isNotEmpty() && !n.contains("#")) return n
-    }
+
+    if (extractedName.isNotEmpty() && !extractedName.contains("#")) return extractedName
     return LEAGUES_MAP[leagueId] ?: "Liga Oficial"
 }
 
@@ -367,45 +416,6 @@ object BzzoiroApiClient {
     private val squadCache = mutableMapOf<Long, List<Pair<String, String>>>()
     private val formCache = mutableMapOf<Long, TeamRealFormStats>()
 
-    private val VERIFIED_CLUB_ATTACKERS = mapOf(
-        1045L to listOf(Pair("Hulk", "Delantero Centro"), Pair("Paulinho", "Segundo Delantero")),
-        1258L to listOf(Pair("Isaac Romero", "Delantero Centro"), Pair("Dodi Lukébakio", "Extremo Ofensivo")),
-        1251L to listOf(Pair("Kylian Mbappé", "Delantero Centro"), Pair("Vinícius Jr", "Extremo Izquierdo")),
-        1255L to listOf(Pair("Robert Lewandowski", "Delantero Centro"), Pair("Lamine Yamal", "Extremo Derecho")),
-        1252L to listOf(Pair("Julián Álvarez", "Delantero Centro"), Pair("Antoine Griezmann", "Mediapunta")),
-        12L to listOf(Pair("Erling Haaland", "Delantero Centro"), Pair("Phil Foden", "Mediapunta")),
-        14L to listOf(Pair("Mohamed Salah", "Extremo Derecho"), Pair("Luis Díaz", "Extremo Izquierdo")),
-        17L to listOf(Pair("Cole Palmer", "Mediapunta"), Pair("Nicolas Jackson", "Delantero Centro")),
-        11L to listOf(Pair("Bukayo Saka", "Extremo Derecho"), Pair("Kai Havertz", "Delantero Centro")),
-        1109L to listOf(Pair("Lautaro Martínez", "Delantero Centro"), Pair("Marcus Thuram", "Delantero Centro")),
-        1042L to listOf(Pair("Pedro", "Delantero Centro"), Pair("Gabriel Barbosa", "Delantero")),
-        1056L to listOf(Pair("Yuri Alberto", "Delantero Centro"), Pair("Memphis Depay", "Segundo Delantero")),
-        1001L to listOf(Pair("Edinson Cavani", "Delantero Centro"), Pair("Miguel Merentiel", "Delantero")),
-        1002L to listOf(Pair("Miguel Borja", "Delantero Centro"), Pair("Facundo Colidio", "Segundo Delantero")),
-        1004L to listOf(Pair("Adrián Martínez", "Delantero Centro"), Pair("Juanfer Quintero", "Mediapunta")),
-        18L to listOf(Pair("Lionel Messi", "Delantero"), Pair("Luis Suárez", "Delantero Centro"))
-    )
-
-    fun getAuthenticTeamAttackers(teamId: Long, teamName: String): List<Pair<String, String>> {
-        VERIFIED_CLUB_ATTACKERS[teamId]?.let { return it }
-        val norm = teamName.lowercase(Locale.ROOT).trim()
-        for ((id, list) in VERIFIED_CLUB_ATTACKERS) {
-            when (id) {
-                1045L -> if (norm.contains("mineiro") || norm == "atlético mg") return list
-                1258L -> if (norm == "sevilla" || norm.contains("sevilla fc")) return list
-                1251L -> if (norm.contains("real madrid")) return list
-                1255L -> if (norm == "barcelona" || norm.contains("fc barcelona")) return list
-                1252L -> if (norm.contains("atlético madrid") || norm.contains("atletico madrid")) return list
-                17L -> if (norm == "chelsea" || norm.contains("chelsea fc")) return list
-                1001L -> if (norm.contains("boca")) return list
-                1002L -> if (norm.contains("river plate")) return list
-                1004L -> if (norm.contains("racing club")) return list
-                18L -> if (norm.contains("inter miami")) return list
-            }
-        }
-        return emptyList()
-    }
-
     fun parseIsoDate(dateStr: String): ZonedDateTime? {
         if (dateStr.isBlank()) return null
         val clean = dateStr.trim().replace(" ", "T")
@@ -448,40 +458,55 @@ object BzzoiroApiClient {
         return BufferedReader(InputStreamReader(stream)).use { it.readText() }
     }
 
-    suspend fun fetchTeamSquad(teamId: Long, teamName: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+    suspend fun fetchTeamSquad(teamId: Long, teamName: String, isHomeTeam: Boolean = true): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        if (teamId <= 0L) {
+            val fallbackLabel = if (isHomeTeam) "Jugador Local" else "Delantero por confirmar"
+            return@withContext listOf(Pair(fallbackLabel, "Atacante Principal"), Pair("Delantero por confirmar", "Segundo Atacante"))
+        }
         squadCache[teamId]?.let { return@withContext it }
         val attackers = mutableListOf<Pair<String, String>>()
-        val verified = getAuthenticTeamAttackers(teamId, teamName)
-        if (verified.isNotEmpty()) {
-            squadCache[teamId] = verified
-            return@withContext verified
-        }
-        val isMineiro = teamName.lowercase(Locale.ROOT).contains("mineiro") || teamId == 1045L
-        val isChelsea = teamName.lowercase(Locale.ROOT).contains("chelsea") || teamId == 17L
 
         try {
             val conn = openConnection("/teams/$teamId/squad/")
             if (conn.responseCode == 200) {
                 val root = JSONObject(readResponse(conn))
-                val returnedTeamId = root.optLong("team_id", 0L)
+                val returnedTeamId = root.optLong("team_id", root.optLong("id", 0L))
                 if (returnedTeamId == 0L || returnedTeamId == teamId) {
-                    val playersArr = root.optJSONArray("players") ?: JSONArray()
+                    val playersArr = root.optJSONArray("players")
+                        ?: root.optJSONArray("results")
+                        ?: root.optJSONArray("squad")
+                        ?: JSONArray()
                     val forwards = mutableListOf<String>()
                     val midfielders = mutableListOf<String>()
+
                     for (i in 0 until playersArr.length()) {
                         val p = playersArr.getJSONObject(i)
-                        val name = p.optString("name", "").trim()
-                        val pos = p.optString("position", "").uppercase(Locale.ROOT).trim()
-                        val pTeamId = if (p.has("team_id") && !p.isNull("team_id")) p.optLong("team_id") else 0L
+                        val name = p.optString("name", "").trim().ifEmpty {
+                            val fn = p.optString("first_name", "").trim()
+                            val ln = p.optString("last_name", "").trim()
+                            if (fn.isNotEmpty() || ln.isNotEmpty()) "$fn $ln".trim() else ""
+                        }
+                        if (name.isEmpty()) continue
+
+                        // Validación estricta por team_id: si existe en el objeto del jugador, debe pertenecer al equipo consultado
+                        val pTeamId = when {
+                            p.has("team_id") && !p.isNull("team_id") -> p.optLong("team_id")
+                            p.has("team") && p.optJSONObject("team") != null -> p.optJSONObject("team")!!.optLong("id")
+                            else -> 0L
+                        }
                         if (pTeamId != 0L && pTeamId != teamId) continue
-                        if (name.contains("Hulk", ignoreCase = true) && !isMineiro) continue
-                        if (name.contains("Nicolas Jackson", ignoreCase = true) && !isChelsea) continue
+
+                        // Descartar placeholders y jugadores fantasma
                         if (name.contains("Mateo Silveira", ignoreCase = true)) continue
-                        if (name.isNotEmpty()) {
-                            if (pos == "F" || pos == "A" || pos.contains("ATTACK") || pos.contains("FORWARD") || pos.contains("STRIKER")) forwards.add(name)
-                            else if (pos == "M" || pos.contains("MIDFIELD")) midfielders.add(name)
+
+                        val pos = (p.optString("position", "") + " " + p.optString("role", "")).uppercase(Locale.ROOT).trim()
+                        if (pos.contains("F") || pos.contains("ATTACK") || pos.contains("FORWARD") || pos.contains("STRIKER") || pos.contains("DELANTERO")) {
+                            forwards.add(name)
+                        } else if (pos.contains("M") || pos.contains("MIDFIELD") || pos.contains("MEDIO") || pos.contains("VOLANTE")) {
+                            midfielders.add(name)
                         }
                     }
+
                     for (f in forwards.take(2)) attackers.add(Pair(f, "Delantero Centro"))
                     if (attackers.size < 2) {
                         for (m in midfielders.take(2 - attackers.size)) attackers.add(Pair(m, "Mediapunta"))
@@ -491,10 +516,14 @@ object BzzoiroApiClient {
             conn.disconnect()
         } catch (_: Exception) {}
 
+        // Si Bzzoiro no devuelve el plantel o no hay atacantes confirmados, NUNCA inventar nombres
         if (attackers.isEmpty()) {
-            attackers.add(Pair("Delantero ($teamName)", "Delantero Centro"))
-            attackers.add(Pair("Extremo ($teamName)", "Extremo Ofensivo"))
+            val primaryLabel = if (isHomeTeam) "Jugador Local" else "Delantero por confirmar"
+            val secondaryLabel = if (isHomeTeam) "Delantero por confirmar" else "Jugador Visitante"
+            attackers.add(Pair(primaryLabel, "Atacante Principal"))
+            attackers.add(Pair(secondaryLabel, "Segundo Atacante"))
         }
+
         squadCache[teamId] = attackers
         attackers
     }
@@ -622,7 +651,7 @@ object BzzoiroApiClient {
             else -> "A CONFIRMAR"
         }
 
-        val resolvedLeagueName = resolveLeagueName(obj.optJSONObject("league"), leagueId)
+        val resolvedLeagueName = resolveLeagueName(obj, leagueId)
 
         var h2hTot = 0; var h2hHw = 0; var h2hDr = 0; var h2hAw = 0; var h2hAvgG = 2.45
         val recentScores = mutableListOf<String>()
@@ -681,8 +710,7 @@ object BzzoiroApiClient {
                         for (i in 0 until countThisPage) {
                             val obj = results.getJSONObject(i)
                             val lid = obj.optLong("league_id")
-                            val lObj = obj.optJSONObject("league")
-                            val lName = lObj?.optString("name", "") ?: ""
+                            val lName = extractLeagueName(obj)
                             if (!isWhitelistedLeague(lid, lName)) continue
                             val id = obj.optLong("id")
                             if (seenIds.contains(id)) continue
@@ -710,8 +738,7 @@ object BzzoiroApiClient {
                         for (i in 0 until countThisPage) {
                             val obj = results.getJSONObject(i)
                             val lid = obj.optLong("league_id")
-                            val lObj = obj.optJSONObject("league")
-                            val lName = lObj?.optString("name", "") ?: ""
+                            val lName = extractLeagueName(obj)
                             if (!isWhitelistedLeague(lid, lName)) continue
                             val id = obj.optLong("id")
                             if (seenIds.contains(id)) continue
@@ -744,8 +771,7 @@ object BzzoiroApiClient {
                 for (i in 0 until results.length()) {
                     val obj = results.getJSONObject(i)
                     val lid = obj.optLong("league_id")
-                    val lObj = obj.optJSONObject("league")
-                    val lName = lObj?.optString("name", "") ?: ""
+                    val lName = extractLeagueName(obj)
                     if (!isWhitelistedLeague(lid, lName)) continue
                     list.add(parseApexEventFromJson(obj, nowLocalLdt, limit24h))
                 }
@@ -865,7 +891,7 @@ object QuantumMathEngine {
         homeStats: TeamRealFormStats, awayStats: TeamRealFormStats
     ): List<PlayerShotProp> {
         val list = mutableListOf<PlayerShotProp>()
-        val p1 = homeSquad.getOrNull(0) ?: Pair("Delantero ($homeTeam)", "Delantero Centro")
+        val p1 = homeSquad.getOrNull(0) ?: Pair("Jugador Local", "Delantero Centro")
         val hFwdSoT = (homeStats.avgShotsOnTarget * 0.32).coerceIn(0.8, 2.1)
         val hFwdProbSoT1 = 1.0 - exp(-hFwdSoT)
         val (pickH, probH) = if (hFwdSoT >= 1.25) Pair("Más de 1.5 al Arco", 1.0 - (poissonPmf(0, hFwdSoT) + poissonPmf(1, hFwdSoT))) else Pair("Más de 0.5 al Arco", hFwdProbSoT1)
@@ -876,7 +902,7 @@ object QuantumMathEngine {
             pickOnTarget = pickH, probOnTarget = probH, fairOddsOnTarget = fairOH, displayOdds = String.format(Locale.US, "@%.2f (Calc)", fairOH)
         ))
 
-        val p2 = awaySquad.getOrNull(0) ?: Pair("Delantero ($awayTeam)", "Delantero Centro")
+        val p2 = awaySquad.getOrNull(0) ?: Pair("Delantero por confirmar", "Delantero Centro")
         val aFwdSoT = (awayStats.avgShotsOnTarget * 0.28).coerceIn(0.6, 1.8)
         val aFwdProbSoT1 = 1.0 - exp(-aFwdSoT)
         val (pickA, probA) = if (aFwdSoT >= 1.25) Pair("Más de 1.5 al Arco", 1.0 - (poissonPmf(0, aFwdSoT) + poissonPmf(1, aFwdSoT))) else Pair("Más de 0.5 al Arco", aFwdProbSoT1)
@@ -1081,8 +1107,8 @@ class FootballStatsViewModel : ViewModel() {
                         rawEvents.map { ev ->
                             async {
                                 val oddsDeferred = async { BzzoiroApiClient.fetchEventOdds(ev.id) }
-                                val homeSquadDeferred = async { BzzoiroApiClient.fetchTeamSquad(ev.homeTeamId, ev.homeTeam) }
-                                val awaySquadDeferred = async { BzzoiroApiClient.fetchTeamSquad(ev.awayTeamId, ev.awayTeam) }
+                                val homeSquadDeferred = async { BzzoiroApiClient.fetchTeamSquad(ev.homeTeamId, ev.homeTeam, isHomeTeam = true) }
+                                val awaySquadDeferred = async { BzzoiroApiClient.fetchTeamSquad(ev.awayTeamId, ev.awayTeam, isHomeTeam = false) }
                                 val homeFormDeferred = async { BzzoiroApiClient.fetchTeamForm(ev.homeTeamId, ev.homeTeam) }
                                 val awayFormDeferred = async { BzzoiroApiClient.fetchTeamForm(ev.awayTeamId, ev.awayTeam) }
 

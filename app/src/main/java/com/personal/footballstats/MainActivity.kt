@@ -363,6 +363,7 @@ data class ParlayLeg(
     val pick: String,
     val lambda: Double?,
     val modelProb: Double,
+    val rawOdds: Double,
     val displayOdds: String,
     val edgePercent: Double?,
     val isSafePick: Boolean
@@ -957,37 +958,146 @@ object QuantumMathEngine {
         val playerProps = generateRealPlayerProps(event.homeTeam, event.awayTeam, homeSquad, awaySquad, homeStats, awayStats)
         val mainStriker = playerProps.firstOrNull()
 
-        val qualifyingLegs = mutableListOf<ParlayLeg>()
+        // --------------------------------------------------------------------------
+        // 1. TARJETA DE PARLAY REAL: FILTRO ANTI-CORRELACIÓN DE MERCADOS INDEPENDIENTES
+        // --------------------------------------------------------------------------
+        val candidateLegs = mutableListOf<ParlayLeg>()
+
+        // Mercado A: Doble Oportunidad / Favorito
         if (dcAnalysis.modelProb >= 0.55) {
-            qualifyingLegs.add(ParlayLeg("DOBLE OP", dcAnalysis.pickTitle, null, dcAnalysis.modelProb, dcAnalysis.displayOdds, dcAnalysis.expectedValue?.let { it * 100.0 }, dcAnalysis.modelProb >= 0.70))
-        }
-        if (pOver15 >= 0.65) {
-            val fairO15 = 1.0 / pOver15
-            val dispO15 = if (odds.over15Goals != null && odds.over15Goals > 1.01) String.format(Locale.US, "@%.2f", odds.over15Goals) else String.format(Locale.US, "@%.2f (Calc)", fairO15)
-            qualifyingLegs.add(ParlayLeg("GOLES", "Más de 1.5 Goles", lambdaTotal, pOver15, dispO15, null, pOver15 >= 0.75))
-        } else if ((1.0 - pOver35) >= 0.65) {
-            val pU35 = 1.0 - pOver35
-            val fairU35 = 1.0 / pU35
-            val dispU35 = if (odds.under35Goals != null && odds.under35Goals > 1.01) String.format(Locale.US, "@%.2f", odds.under35Goals) else String.format(Locale.US, "@%.2f (Calc)", fairU35)
-            qualifyingLegs.add(ParlayLeg("GOLES", "Menos de 3.5 Goles", lambdaTotal, pU35, dispU35, null, pU35 >= 0.75))
-        }
-        if (cornersAnalysis.recommendedProb >= 0.55) {
-            qualifyingLegs.add(ParlayLeg("CÓRNERS", cornersAnalysis.recommendedPick, cornersAnalysis.expectedTotal, cornersAnalysis.recommendedProb, cornersAnalysis.displayOdds, null, cornersAnalysis.recommendedProb >= 0.65))
-        }
-        if (mainStriker != null && mainStriker.probOnTarget >= 0.55) {
-            qualifyingLegs.add(ParlayLeg("REMATES", "${mainStriker.fullName}: ${mainStriker.pickOnTarget}", mainStriker.shotsOnTargetLambda, mainStriker.probOnTarget, mainStriker.displayOdds, null, mainStriker.probOnTarget >= 0.65))
+            candidateLegs.add(
+                ParlayLeg(
+                    category = "Doble Op",
+                    pick = dcAnalysis.pickTitle,
+                    lambda = null,
+                    modelProb = dcAnalysis.modelProb,
+                    rawOdds = dcAnalysis.rawOdds,
+                    displayOdds = dcAnalysis.displayOdds,
+                    edgePercent = dcAnalysis.expectedValue?.let { it * 100.0 },
+                    isSafePick = dcAnalysis.modelProb >= 0.70
+                )
+            )
         }
 
-        val parlayLegs = if (qualifyingLegs.size >= 2) qualifyingLegs.take(4) else emptyList()
-        val (jointProb, parlayDisplay, kelly) = if (parlayLegs.isNotEmpty()) {
+        // Mercado B: Goles o BTTS (Estricta Exclusión Mutua para Cero Correlación)
+        val goalCandidates = mutableListOf<ParlayLeg>()
+        if (pOver15 >= 0.55) {
+            val fairO = (1.0 / pOver15).coerceIn(1.05, 15.0)
+            val hasMkt = odds.over15Goals != null && odds.over15Goals > 1.01
+            val rawO = if (hasMkt) odds.over15Goals!! else fairO
+            val dispO = if (hasMkt) String.format(Locale.US, "@%.2f", rawO) else String.format(Locale.US, "@%.2f (Calc)", fairO)
+            goalCandidates.add(ParlayLeg("Goles", "Más de 1.5 Goles", lambdaTotal, pOver15, rawO, dispO, null, pOver15 >= 0.75))
+        }
+        val pU35 = 1.0 - pOver35
+        if (pU35 >= 0.55) {
+            val fairO = (1.0 / pU35).coerceIn(1.05, 15.0)
+            val hasMkt = odds.under35Goals != null && odds.under35Goals > 1.01
+            val rawO = if (hasMkt) odds.under35Goals!! else fairO
+            val dispO = if (hasMkt) String.format(Locale.US, "@%.2f", rawO) else String.format(Locale.US, "@%.2f (Calc)", fairO)
+            goalCandidates.add(ParlayLeg("Goles", "Menos de 3.5 Goles", lambdaTotal, pU35, rawO, dispO, null, pU35 >= 0.75))
+        }
+        if (pOver25 >= 0.55) {
+            val fairO = (1.0 / pOver25).coerceIn(1.05, 15.0)
+            val hasMkt = odds.over25Goals != null && odds.over25Goals > 1.01
+            val rawO = if (hasMkt) odds.over25Goals!! else fairO
+            val dispO = if (hasMkt) String.format(Locale.US, "@%.2f", rawO) else String.format(Locale.US, "@%.2f (Calc)", fairO)
+            goalCandidates.add(ParlayLeg("Goles", "Más de 2.5 Goles", lambdaTotal, pOver25, rawO, dispO, null, pOver25 >= 0.70))
+        }
+        val pU25 = 1.0 - pOver25
+        if (pU25 >= 0.55) {
+            val fairO = (1.0 / pU25).coerceIn(1.05, 15.0)
+            val hasMkt = odds.under25Goals != null && odds.under25Goals > 1.01
+            val rawO = if (hasMkt) odds.under25Goals!! else fairO
+            val dispO = if (hasMkt) String.format(Locale.US, "@%.2f", rawO) else String.format(Locale.US, "@%.2f (Calc)", fairO)
+            goalCandidates.add(ParlayLeg("Goles", "Menos de 2.5 Goles", lambdaTotal, pU25, rawO, dispO, null, pU25 >= 0.70))
+        }
+        if (pBttsY >= 0.55) {
+            val fairO = (1.0 / pBttsY).coerceIn(1.05, 15.0)
+            val hasMkt = odds.bttsYes != null && odds.bttsYes > 1.01
+            val rawO = if (hasMkt) odds.bttsYes!! else fairO
+            val dispO = if (hasMkt) String.format(Locale.US, "@%.2f", rawO) else String.format(Locale.US, "@%.2f (Calc)", fairO)
+            goalCandidates.add(ParlayLeg("BTTS", "Ambos Equipos Anotan: Sí", null, pBttsY, rawO, dispO, null, pBttsY >= 0.65))
+        }
+        val pBttsN = 1.0 - pBttsY
+        if (pBttsN >= 0.55) {
+            val fairO = (1.0 / pBttsN).coerceIn(1.05, 15.0)
+            val hasMkt = odds.bttsNo != null && odds.bttsNo > 1.01
+            val rawO = if (hasMkt) odds.bttsNo!! else fairO
+            val dispO = if (hasMkt) String.format(Locale.US, "@%.2f", rawO) else String.format(Locale.US, "@%.2f (Calc)", fairO)
+            goalCandidates.add(ParlayLeg("BTTS", "Ambos Equipos Anotan: No", null, pBttsN, rawO, dispO, null, pBttsN >= 0.65))
+        }
+        // Se selecciona solo el mejor candidato de goles/BTTS para evitar correlación
+        goalCandidates.maxByOrNull { it.modelProb }?.let { candidateLegs.add(it) }
+
+        // Mercado C: Córners (Independiente)
+        val cornerCandidates = mutableListOf<ParlayLeg>()
+        if (cornersAnalysis.probOver85 >= 0.55) {
+            val fairO = cornersAnalysis.fairOddsOver85
+            val hasMkt = odds.overCornerLine != null && odds.overCornerLine > 1.01
+            val rawO = if (hasMkt) odds.overCornerLine!! else fairO
+            val dispO = if (hasMkt) String.format(Locale.US, "@%.2f", rawO) else String.format(Locale.US, "@%.2f (Calc)", fairO)
+            cornerCandidates.add(ParlayLeg("Córners", "Más de 8.5 Córners", cornersAnalysis.expectedTotal, cornersAnalysis.probOver85, rawO, dispO, null, cornersAnalysis.probOver85 >= 0.65))
+        }
+        if (cornersAnalysis.probOver95 >= 0.55) {
+            val fairO = cornersAnalysis.fairOddsOver95
+            val hasMkt = odds.overCornerLine != null && odds.cornerLineVal == 9.5 && odds.overCornerLine > 1.01
+            val rawO = if (hasMkt) odds.overCornerLine!! else fairO
+            val dispO = if (hasMkt) String.format(Locale.US, "@%.2f", rawO) else String.format(Locale.US, "@%.2f (Calc)", fairO)
+            cornerCandidates.add(ParlayLeg("Córners", "Más de 9.5 Córners", cornersAnalysis.expectedTotal, cornersAnalysis.probOver95, rawO, dispO, null, cornersAnalysis.probOver95 >= 0.65))
+        }
+        cornerCandidates.maxByOrNull { it.modelProb }?.let { candidateLegs.add(it) }
+
+        // Mercado D: Tarjetas (Independiente)
+        val cardCandidates = mutableListOf<ParlayLeg>()
+        if (cardsAnalysis.probOver35 >= 0.55) {
+            val fairO = (1.0 / cardsAnalysis.probOver35).coerceIn(1.05, 15.0)
+            val dispO = String.format(Locale.US, "@%.2f (Calc)", fairO)
+            cardCandidates.add(ParlayLeg("Tarjetas", "Más de 3.5 Tarjetas", cardsAnalysis.expectedTotal, cardsAnalysis.probOver35, fairO, dispO, null, cardsAnalysis.probOver35 >= 0.65))
+        }
+        if (cardsAnalysis.probOver45 >= 0.55) {
+            val fairO = (1.0 / cardsAnalysis.probOver45).coerceIn(1.05, 15.0)
+            val hasMkt = odds.overCardsLine != null && odds.overCardsLine > 1.01
+            val rawO = if (hasMkt) odds.overCardsLine!! else fairO
+            val dispO = if (hasMkt) String.format(Locale.US, "@%.2f", rawO) else String.format(Locale.US, "@%.2f (Calc)", fairO)
+            cardCandidates.add(ParlayLeg("Tarjetas", "Más de 4.5 Tarjetas", cardsAnalysis.expectedTotal, cardsAnalysis.probOver45, rawO, dispO, null, cardsAnalysis.probOver45 >= 0.65))
+        }
+        cardCandidates.maxByOrNull { it.modelProb }?.let { candidateLegs.add(it) }
+
+        // Mercado E: Remates de Jugador (Solo si es un jugador auténtico con nombre confirmado)
+        if (mainStriker != null && !mainStriker.fullName.contains("Local", ignoreCase = true) && !mainStriker.fullName.contains("confirmar", ignoreCase = true)) {
+            if (mainStriker.probOnTarget >= 0.55) {
+                candidateLegs.add(
+                    ParlayLeg(
+                        category = "Remates",
+                        pick = "${mainStriker.fullName}: ${mainStriker.pickOnTarget}",
+                        lambda = mainStriker.shotsOnTargetLambda,
+                        modelProb = mainStriker.probOnTarget,
+                        rawOdds = mainStriker.fairOddsOnTarget,
+                        displayOdds = mainStriker.displayOdds,
+                        edgePercent = null,
+                        isSafePick = mainStriker.probOnTarget >= 0.65
+                    )
+                )
+            }
+        }
+
+        // Ordenar por probabilidad descendente y tomar hasta 3 o 4 patas independientes
+        val sortedLegs = candidateLegs.sortedByDescending { it.modelProb }
+        val parlayLegs = if (sortedLegs.size >= 2) sortedLegs.take(4) else emptyList()
+
+        val (jointProb, parlayDisplay, kelly) = if (parlayLegs.size >= 2) {
             var jProb = 1.0
-            for (l in parlayLegs) jProb *= l.modelProb
-            jProb = (jProb * 1.15).coerceIn(0.08, 0.95)
-            val pOddsVal = (1.0 / jProb).coerceIn(1.30, 20.0)
-            val pDisp = String.format(Locale.US, "@%.2f", pOddsVal)
-            val kStake = ((jProb * pOddsVal - 1.0) / (pOddsVal - 1.0) * 0.25 * 100.0).coerceIn(1.0, 4.5)
+            var totalOdds = 1.0
+            for (l in parlayLegs) {
+                jProb *= l.modelProb
+                totalOdds *= l.rawOdds
+            }
+            val pDisp = String.format(Locale.US, "@%.2f", totalOdds)
+            val kStake = ((jProb * totalOdds - 1.0) / (totalOdds - 1.0) * 0.25 * 100.0).coerceIn(1.0, 5.0)
             Triple(jProb, pDisp, kStake)
-        } else Triple(0.0, "-", 0.0)
+        } else {
+            Triple(0.0, "-", 0.0)
+        }
 
         val safePickTitle = dcAnalysis.pickTitle
         val safePickOdds = dcAnalysis.displayOdds
@@ -1457,32 +1567,101 @@ fun MatchBettingSummaryView(summary: MatchBettingSummary) {
 @Composable
 fun MatchBetBuilderCardView(analysis: QuantumMatchAnalysis) {
     val parlay = analysis.parlayLegs
-    if (parlay.isEmpty()) {
-        Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFF141E33), modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+    if (parlay.size < 2) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = Color(0xFF141E33),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
+        ) {
             Text(
-                "No hay apuestas de valor suficiente para este partido",
-                color = Color(0xFF94A3B8), fontSize = 12.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.padding(14.dp)
+                text = "No hay valor suficiente para una combinada",
+                color = Color(0xFF94A3B8),
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(16.dp)
             )
         }
     } else {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("COMBINADA CUÁNTICA DEL PARTIDO", color = Color(0xFF00E5FF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text("Cuota Total: ${analysis.parlayDisplayOdds}", color = Color(0xFF10B981), fontSize = 11.sp, fontWeight = FontWeight.Black)
-            }
-            parlay.forEach { leg ->
-                Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFF141E33), modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF141E33),
+            border = BorderStroke(1.dp, Color(0xFF1E293B)),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+        ) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "COMBINADA RECOMENDADA (PARLAY REAL)",
+                        color = Color(0xFF00E5FF),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Surface(shape = RoundedCornerShape(6.dp), color = Color(0xFF0A0F1D)) {
+                        Text(
+                            text = "${parlay.size} SELECCIONES",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Black,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Divider(color = Color(0xFF1E293B), thickness = 1.dp)
+
+                parlay.forEachIndexed { idx, leg ->
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF0E1626),
+                        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column {
-                            Text(leg.category, color = Color(0xFF38BDF8), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                            Text(leg.pick, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Pata ${idx + 1}: [${leg.category}] - ${leg.pick} (${leg.displayOdds})",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Probabilidad individual: ${(leg.modelProb * 100).toInt()}%",
+                                    color = Color(0xFF64748B),
+                                    fontSize = 10.sp
+                                )
+                            }
                         }
-                        Text(leg.displayOdds, color = Color(0xFF10B981), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Divider(color = Color(0xFF1E293B), thickness = 1.dp)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("CUOTA TOTAL COMBINADA", color = Color(0xFF94A3B8), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(analysis.parlayDisplayOdds, color = Color(0xFF10B981), fontSize = 16.sp, fontWeight = FontWeight.Black)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("PROBABILIDAD CONJUNTA", color = Color(0xFF94A3B8), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "${(analysis.jointProbability * 100).toInt()}%",
+                            color = Color(0xFF00E5FF),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black
+                        )
                     }
                 }
             }

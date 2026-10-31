@@ -46,7 +46,7 @@ import kotlin.math.*
 // ==============================================================================
 // 1. CONFIGURACIÓN WHITELABEL Y LISTA BLANCA DE LIGAS (BZZOIRO DATA API)
 // ==============================================================================
-var bzzoiroApiKey: String = "196b5da801d2a96f72b4e69ed0f4a430b8b25d99"
+var bzzoiroApiKey: String = "9665517ed1732bad524c3730e18cd9d90cc1d13f"
 const val BZZOIRO_BASE_URL: String = "https://sports.bzzoiro.com/api/v2"
 
 val WHITELISTED_LEAGUE_IDS: Set<Long> = setOf(
@@ -89,36 +89,44 @@ fun extractLeagueName(obj: JSONObject): String {
     val lObj = obj.optJSONObject("league")
     if (lObj != null) {
         val n = lObj.optString("name", "").trim()
-        if (n.isNotEmpty()) return n
+        if (n.isNotEmpty() && !n.equals("null", ignoreCase = true)) return n
     }
     val directLeague = obj.optString("league_name", "").trim()
-    if (directLeague.isNotEmpty()) return directLeague
+    if (directLeague.isNotEmpty() && !directLeague.equals("null", ignoreCase = true)) return directLeague
 
     val leagueStr = obj.optString("league", "").trim()
-    if (leagueStr.isNotEmpty() && !leagueStr.startsWith("{") && !leagueStr.matches(Regex("^\\d+$"))) return leagueStr
+    if (leagueStr.isNotEmpty() && !leagueStr.startsWith("{") && !leagueStr.matches(Regex("^\\d+$")) && !leagueStr.equals("null", ignoreCase = true)) return leagueStr
 
     val tObj = obj.optJSONObject("tournament")
     if (tObj != null) {
         val tn = tObj.optString("name", "").trim()
-        if (tn.isNotEmpty()) return tn
+        if (tn.isNotEmpty() && !tn.equals("null", ignoreCase = true)) return tn
     }
     val tName = obj.optString("tournament_name", "").trim()
-    if (tName.isNotEmpty()) return tName
+    if (tName.isNotEmpty() && !tName.equals("null", ignoreCase = true)) return tName
 
     val cObj = obj.optJSONObject("competition")
     if (cObj != null) {
         val cn = cObj.optString("name", "").trim()
-        if (cn.isNotEmpty()) return cn
+        if (cn.isNotEmpty() && !cn.equals("null", ignoreCase = true)) return cn
     }
-    return obj.optString("competition_name", "").trim()
+    val compName = obj.optString("competition_name", "").trim()
+    if (compName.isNotEmpty() && !compName.equals("null", ignoreCase = true)) return compName
+
+    val champObj = obj.optJSONObject("championship")
+    if (champObj != null) {
+        val chn = champObj.optString("name", "").trim()
+        if (chn.isNotEmpty() && !chn.equals("null", ignoreCase = true)) return chn
+    }
+    val champName = obj.optString("championship_name", "").trim()
+    if (champName.isNotEmpty() && !champName.equals("null", ignoreCase = true)) return champName
+
+    return ""
 }
 
 fun isWhitelistedLeague(leagueId: Long, leagueName: String = ""): Boolean {
-    // ==========================================================================
-    // MODO DIAGNÓSTICO TEMPORAL ACTIVADO:
-    // Retorna true para recibir y mostrar TODOS los partidos devueltos por Bzzoiro.
-    // Permite al usuario inspeccionar en la UI los ID y nombres reales de las ligas.
-    // ==========================================================================
+    // Si no tiene ID ni nombre devuelto, se descarta
+    if (leagueId <= 0L && leagueName.isBlank()) return false
     return true
 }
 
@@ -163,8 +171,10 @@ fun resolveLeagueName(rawObj: JSONObject?, leagueId: Long): String {
         1L -> return "Premier League (Inglaterra)"
     }
 
-    if (extractedName.isNotEmpty() && !extractedName.contains("#")) return extractedName
-    return LEAGUES_MAP[leagueId] ?: if (extractedName.isNotEmpty()) extractedName else "Liga Oficial"
+    if (extractedName.isNotEmpty() && !extractedName.contains("#") && !extractedName.equals("null", ignoreCase = true)) return extractedName
+    val mapped = LEAGUES_MAP[leagueId]
+    if (!mapped.isNullOrBlank()) return mapped
+    return ""
 }
 
 // ==============================================================================
@@ -202,7 +212,12 @@ data class ApexEvent(
     val awayRecentForm: List<MatchFormResult>,
     val isNext24Hours: Boolean,
     val timeToKickoffFormatted: String
-)
+) {
+    val isLive: Boolean get() = status == "inprogress" || currentMinute != null
+    val isFinished: Boolean get() = status == "finished" || status == "ft" || status == "ended"
+    val isLiveOrFinished: Boolean get() = isLive || isFinished
+    val realScoreString: String get() = "${homeScore ?: 0} - ${awayScore ?: 0}"
+}
 
 data class RealOdds(
     val home1x2: Double? = null,
@@ -316,7 +331,8 @@ data class MatchBettingSummary(
     val playerPickOdds: String,
     val cardsPick: String,
     val predictedScore: String,
-    val quickVerdict: String
+    val quickVerdict: String,
+    val isLiveOrFinished: Boolean = false
 )
 
 data class QuantumMatchAnalysis(
@@ -351,6 +367,7 @@ data class QuantumMatchAnalysis(
 // 3. CLIENTE HTTP BZZOIRO SPORTS DATA (VALIDACIÓN ESTRICTA Y PAGINACIÓN)
 // ==============================================================================
 object BzzoiroApiClient {
+    var lastDebugInfo: String = ""
     private val squadCache = mutableMapOf<Long, List<Pair<String, String>>>()
     private val formCache = mutableMapOf<Long, TeamRealFormStats>()
 
@@ -613,10 +630,19 @@ object BzzoiroApiClient {
         obj: JSONObject,
         nowLocalLdt: LocalDateTime = LocalDateTime.now(),
         limitTime: LocalDateTime = LocalDateTime.now().plusHours(48)
-    ): ApexEvent {
+    ): ApexEvent? {
         val id = obj.optLong("id")
         val leagueId = obj.optLong("league_id")
-        val roundLabel = extractSafeString(obj, "round_label").ifEmpty { "Jornada Oficial" }
+        val resolvedLeagueName = resolveLeagueName(obj, leagueId)
+
+        // ELIMINACIÓN ESTRICTA: Si no hay nombre de liga o es texto genérico, se descarta el partido
+        if (resolvedLeagueName.isBlank() ||
+            resolvedLeagueName.equals("Liga Oficial", ignoreCase = true) ||
+            resolvedLeagueName.equals("Liga Desconocida", ignoreCase = true)) {
+            return null
+        }
+
+        val roundLabel = extractSafeString(obj, "round_label").ifEmpty { "Jornada Regular" }
         val homeTeamId = obj.optLong("home_team_id")
         val homeTeam = extractSafeString(obj, "home_team").ifEmpty { "Local" }
         val awayTeamId = obj.optLong("away_team_id")
@@ -648,8 +674,6 @@ object BzzoiroApiClient {
             matchLocal != null -> matchLocal.format(DateTimeFormatter.ofPattern("dd/MM • HH:mm 'hs'", Locale.getDefault()))
             else -> "Fecha por confirmar"
         }
-
-        val resolvedLeagueName = resolveLeagueName(obj, leagueId)
 
         var h2hTot = 0; var h2hHw = 0; var h2hDr = 0; var h2hAw = 0; var h2hAvgG = 2.45
         val recentScores = mutableListOf<String>()
@@ -702,7 +726,10 @@ object BzzoiroApiClient {
                     val conn = openConnection("/events/?date_from=$dStr&date_to=$dStr&limit=$limitPerPage&offset=$offset")
                     if (conn.responseCode == 200) {
                         val root = JSONObject(readResponse(conn))
-                        val results = root.optJSONArray("results") ?: JSONArray()
+                        val results = root.optJSONArray("results")
+                            ?: root.optJSONArray("events")
+                            ?: root.optJSONArray("data")
+                            ?: JSONArray()
                         val countThisPage = results.length()
 
                         for (i in 0 until countThisPage) {
@@ -712,14 +739,23 @@ object BzzoiroApiClient {
                             if (!isWhitelistedLeague(lid, lName)) continue
                             val id = obj.optLong("id")
                             if (seenIds.contains(id)) continue
-                            seenIds.add(id)
-                            list.add(parseApexEventFromJson(obj, nowLocalLdt, limit48h))
+                            val parsed = parseApexEventFromJson(obj, nowLocalLdt, limit48h)
+                            if (parsed != null) {
+                                seenIds.add(id)
+                                list.add(parsed)
+                            }
                         }
                         val nextUrl = root.optString("next", "")
                         if (nextUrl.isNotEmpty() && countThisPage == limitPerPage) offset += limitPerPage else hasMore = false
-                    } else hasMore = false
+                    } else {
+                        lastDebugInfo = "HTTP ${conn.responseCode}: ${readResponse(conn).take(200)}"
+                        hasMore = false
+                    }
                     conn.disconnect()
-                } catch (_: Exception) { hasMore = false }
+                } catch (e: Exception) {
+                    if (lastDebugInfo.isEmpty()) lastDebugInfo = "Excepción: ${e.localizedMessage ?: "Error de red"}"
+                    hasMore = false
+                }
             }
         }
 
@@ -731,7 +767,10 @@ object BzzoiroApiClient {
                     val conn = openConnection("/events/?limit=100&offset=$offset")
                     if (conn.responseCode == 200) {
                         val root = JSONObject(readResponse(conn))
-                        val results = root.optJSONArray("results") ?: JSONArray()
+                        val results = root.optJSONArray("results")
+                            ?: root.optJSONArray("events")
+                            ?: root.optJSONArray("data")
+                            ?: JSONArray()
                         val countThisPage = results.length()
                         for (i in 0 until countThisPage) {
                             val obj = results.getJSONObject(i)
@@ -740,14 +779,23 @@ object BzzoiroApiClient {
                             if (!isWhitelistedLeague(lid, lName)) continue
                             val id = obj.optLong("id")
                             if (seenIds.contains(id)) continue
-                            seenIds.add(id)
-                            list.add(parseApexEventFromJson(obj, nowLocalLdt, limit48h))
+                            val parsed = parseApexEventFromJson(obj, nowLocalLdt, limit48h)
+                            if (parsed != null) {
+                                seenIds.add(id)
+                                list.add(parsed)
+                            }
                         }
                         val nextUrl = root.optString("next", "")
                         if (nextUrl.isNotEmpty() && countThisPage == 100) offset += 100 else hasMore = false
-                    } else hasMore = false
+                    } else {
+                        lastDebugInfo = "HTTP ${conn.responseCode}: ${readResponse(conn).take(200)}"
+                        hasMore = false
+                    }
                     conn.disconnect()
-                } catch (_: Exception) { hasMore = false }
+                } catch (e: Exception) {
+                    if (lastDebugInfo.isEmpty()) lastDebugInfo = "Excepción: ${e.localizedMessage ?: "Error de red"}"
+                    hasMore = false
+                }
             }
         }
 
@@ -765,17 +813,27 @@ object BzzoiroApiClient {
             val conn = openConnection("/events/?date_from=$dateFrom&date_to=$dateTo&limit=$limit")
             if (conn.responseCode == 200) {
                 val root = JSONObject(readResponse(conn))
-                val results = root.optJSONArray("results") ?: JSONArray()
+                val results = root.optJSONArray("results")
+                    ?: root.optJSONArray("events")
+                    ?: root.optJSONArray("data")
+                    ?: JSONArray()
                 for (i in 0 until results.length()) {
                     val obj = results.getJSONObject(i)
                     val lid = obj.optLong("league_id")
                     val lName = extractLeagueName(obj)
                     if (!isWhitelistedLeague(lid, lName)) continue
-                    list.add(parseApexEventFromJson(obj, nowLocalLdt, limit48h))
+                    val parsed = parseApexEventFromJson(obj, nowLocalLdt, limit48h)
+                    if (parsed != null) {
+                        list.add(parsed)
+                    }
                 }
+            } else {
+                lastDebugInfo = "HTTP ${conn.responseCode}: ${readResponse(conn).take(200)}"
             }
             conn.disconnect()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            lastDebugInfo = "Excepción: ${e.localizedMessage ?: "Error de red"}"
+        }
         list.sortedWith(
             compareBy<ApexEvent> { if (it.status == "inprogress") 0 else 1 }
                 .thenBy { it.eventDateZdt?.toEpochSecond() ?: Long.MAX_VALUE }
@@ -1192,12 +1250,18 @@ object QuantumMathEngine {
 
         val pPick = mainStriker?.let { "${it.fullName} (${it.teamName}): ${it.pickOnTarget}" } ?: "Remate al arco atacante principal"
         val pOdds = mainStriker?.displayOdds ?: "@1.45 (Calc)"
-        val qVerdict = "${dcAnalysis.favoriteTeam} parte con ventaja matemática (${(max(pHome, pAway) * 100).toInt()}%). La Doble Op (${dcAnalysis.pickCode}) ofrece cobertura sólida del ${(dcAnalysis.modelProb * 100).toInt()}%."
+        val displayedScore = if (event.isLiveOrFinished) event.realScoreString else bestScore
+        val qVerdict = when {
+            event.isFinished -> "Partido finalizado con marcador real ${event.realScoreString}."
+            event.isLive -> "Partido en juego (${event.realScoreString}, min ${event.currentMinute ?: 0}'). Marcador verificado en tiempo real."
+            else -> "${dcAnalysis.favoriteTeam} parte con ventaja matemática (${(max(pHome, pAway) * 100).toInt()}%). La Doble Op (${dcAnalysis.pickCode}) ofrece cobertura sólida del ${(dcAnalysis.modelProb * 100).toInt()}%."
+        }
 
         val summary = MatchBettingSummary(
             safePick = safePickTitle, safePickOdds = safePickOdds, safePickProb = safePickProb,
             valuePick = valPick, valuePickOdds = valOdds, playerPick = pPick, playerPickOdds = pOdds,
-            cardsPick = cardsAnalysis.recommendedPick, predictedScore = bestScore, quickVerdict = qVerdict
+            cardsPick = cardsAnalysis.recommendedPick, predictedScore = displayedScore,
+            quickVerdict = qVerdict, isLiveOrFinished = event.isLiveOrFinished
         )
 
         val updatedEvent = event.copy(
@@ -1210,7 +1274,7 @@ object QuantumMathEngine {
             lambdaHomeGoals = lambdaHome, lambdaAwayGoals = lambdaAway, lambdaTotalGoals = lambdaTotal,
             probHomeWin = pHome, probDraw = pDraw, probAwayWin = pAway,
             probOver15Goals = pOver15, probOver25Goals = pOver25, probOver35Goals = pOver35, probBttsYes = pBttsY,
-            mostProbableScore = bestScore, scoreProbability = bestScoreP, doubleChanceAnalysis = dcAnalysis,
+            mostProbableScore = displayedScore, scoreProbability = bestScoreP, doubleChanceAnalysis = dcAnalysis,
             cornersAnalysis = cornersAnalysis, cardsAnalysis = cardsAnalysis, playerProps = playerProps,
             parlayLegs = parlayLegs, jointProbability = jointProb, parlayDisplayOdds = parlayDisplay,
             kellyStakePercent = kelly, bettingSummary = summary
@@ -1297,7 +1361,8 @@ class FootballStatsViewModel : ViewModel() {
             try {
                 val rawEvents = BzzoiroApiClient.fetchUpcomingEvents(daysAhead = 3, limitPerPage = 100)
                 if (rawEvents.isEmpty()) {
-                    errorMessage = "No se encontraron partidos devueltos por Bzzoiro para el rango consultado."
+                    val debug = BzzoiroApiClient.lastDebugInfo.ifEmpty { "Respuesta vacía del servidor (0 eventos en el rango consultado)." }
+                    errorMessage = "No se encontraron partidos devueltos por Bzzoiro para el rango consultado.\nDetalle: $debug"
                 } else {
                     val analysesList = coroutineScope {
                         rawEvents.map { ev ->
@@ -1670,8 +1735,9 @@ fun MatchBettingSummaryView(summary: MatchBettingSummary) {
                     Text("${summary.playerPick} ${summary.playerPickOdds}", color = Color(0xFFA855F7), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Marcador Más Probable:", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                    Text(summary.predictedScore, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    val scoreLabel = if (summary.isLiveOrFinished) "Marcador Actual / Real:" else "Marcador Más Probable:"
+                    Text(scoreLabel, color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    Text(summary.predictedScore, color = if (summary.isLiveOrFinished) Color(0xFF00E5FF) else Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1878,7 +1944,8 @@ fun Poisson1X2ModuleView(analysis: QuantumMatchAnalysis) {
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Ambos Marcan (BTTS): ${(analysis.probBttsYes * 100).toInt()}%", color = Color(0xFFCBD5E1), fontSize = 11.sp)
-                Text("Marcador: ${analysis.mostProbableScore}", color = Color(0xFF10B981), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                val scoreLabel = if (analysis.event.isLiveOrFinished) "Marcador Real" else "Marcador Probable"
+                Text("$scoreLabel: ${analysis.mostProbableScore}", color = Color(0xFF10B981), fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

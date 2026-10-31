@@ -12,7 +12,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -1296,8 +1298,7 @@ class FootballStatsViewModel : ViewModel() {
         private set
     var selectedLeagueFilter by mutableStateOf("ALL")
     var onlyNext24Hours by mutableStateOf(true)
-
-    private var autoRefreshJob: Job? = null
+    var searchQuery by mutableStateOf("")
 
     val availableLeagues: List<Pair<String, String>>
         get() {
@@ -1322,6 +1323,7 @@ class FootballStatsViewModel : ViewModel() {
             val nowLdt = LocalDateTime.now()
             val limit48h = nowLdt.plusHours(48)
             val minTime = nowLdt.minusHours(2)
+            val query = searchQuery.trim()
             val list = allAnalyses.filter { analysis ->
                 val matchLdt = analysis.event.eventDateZdt?.toLocalDateTime()
                 val matchesTime = if (onlyNext24Hours) {
@@ -1331,7 +1333,11 @@ class FootballStatsViewModel : ViewModel() {
                     else true // Si no hay fecha parseada, NO ocultar
                 } else true
                 val matchesLeague = if (selectedLeagueFilter == "ALL") true else analysis.event.leagueId.toString() == selectedLeagueFilter
-                matchesTime && matchesLeague
+                val matchesSearch = if (query.isEmpty()) true else {
+                    analysis.event.homeTeam.contains(query, ignoreCase = true) ||
+                    analysis.event.awayTeam.contains(query, ignoreCase = true)
+                }
+                matchesTime && matchesLeague && matchesSearch
             }
             return list.sortedWith(
                 compareBy<QuantumMatchAnalysis> { if (it.event.status == "inprogress" || it.event.currentMinute != null) 0 else 1 }
@@ -1341,17 +1347,6 @@ class FootballStatsViewModel : ViewModel() {
 
     init {
         loadData()
-        startAutoRefresh()
-    }
-
-    private fun startAutoRefresh() {
-        autoRefreshJob?.cancel()
-        autoRefreshJob = viewModelScope.launch {
-            while (isActive) {
-                delay(30L * 60L * 1000L) // Auto actualización cada 30 minutos
-                loadData()
-            }
-        }
     }
 
     fun loadData() {
@@ -1396,7 +1391,7 @@ class FootballStatsViewModel : ViewModel() {
                     allAnalyses = analysesList.sortedBy { it.event.eventDateZdt?.toEpochSecond() ?: Long.MAX_VALUE }
                 }
                 val nowLocal = ZonedDateTime.now(ZoneId.systemDefault())
-                lastUpdatedTime = "Actualizado ${nowLocal.format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))} hs (Auto 30 min)"
+                lastUpdatedTime = "Actualizado: ${nowLocal.format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))} hs"
             } catch (e: Exception) {
                 errorMessage = "Error de conexión: ${e.localizedMessage ?: "Revise red"}"
             } finally {
@@ -1448,6 +1443,10 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
                 .padding(innerPadding)
                 .background(Brush.verticalGradient(listOf(Color(0xFF070B14), Color(0xFF0C1322), Color(0xFF070B14))))
         ) {
+            TeamSearchBar(
+                query = viewModel.searchQuery,
+                onQueryChange = { viewModel.searchQuery = it }
+            )
             TimeWindowSelectorRow(
                 onlyNext24h = viewModel.onlyNext24Hours,
                 onSelectWindow = { viewModel.onlyNext24Hours = it }
@@ -1480,7 +1479,12 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
                 }
             } else if (analyses.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-                    Text("No hay partidos programados para la liga o rango seleccionado.", color = Color(0xFF94A3B8), textAlign = TextAlign.Center, fontSize = 14.sp)
+                    val emptyMsg = if (viewModel.searchQuery.isNotBlank()) {
+                        "No se encontraron partidos para \"${viewModel.searchQuery}\"."
+                    } else {
+                        "No hay partidos programados para la liga o rango seleccionado."
+                    }
+                    Text(emptyMsg, color = Color(0xFF94A3B8), textAlign = TextAlign.Center, fontSize = 14.sp)
                 }
             } else {
                 LazyColumn(
@@ -1494,6 +1498,59 @@ fun ApexQuantumMainScreen(viewModel: FootballStatsViewModel = androidx.lifecycle
             }
         }
     }
+}
+
+@Composable
+fun TeamSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        placeholder = {
+            Text(
+                text = "Buscar equipo...",
+                color = Color(0xFF64748B),
+                fontSize = 13.sp
+            )
+        },
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = "Buscar",
+                tint = Color(0xFF00E5FF),
+                modifier = Modifier.size(20.dp)
+            )
+        },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Borrar",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        },
+        singleLine = true,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color(0xFFF1F5F9),
+            focusedContainerColor = Color(0xFF0E1626),
+            unfocusedContainerColor = Color(0xFF0E1626),
+            cursorColor = Color(0xFF00E5FF),
+            focusedBorderColor = Color(0xFF00E5FF),
+            unfocusedBorderColor = Color(0xFF1E293B)
+        ),
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+    )
 }
 
 @Composable

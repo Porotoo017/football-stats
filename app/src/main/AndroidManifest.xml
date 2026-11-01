@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
     <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="true"
-        android:label="Football Stats"
+        android:icon="@mipmap/ic_launcher"
+        android:label="APEX STRIKE"
+        android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@style/Theme.Footballstats">
+        
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -15,4 +20,5 @@
             </intent-filter>
         </activity>
     </application>
+
 </manifest>

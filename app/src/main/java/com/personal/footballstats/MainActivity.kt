@@ -249,6 +249,10 @@ data class TeamRealFormStats(
     val matchesPlayed: Int = 0,
     val avgGoalsScored: Double? = null,
     val avgGoalsConceded: Double? = null,
+    val avgGoalsScoredHome: Double? = null,
+    val avgGoalsConcededHome: Double? = null,
+    val avgGoalsScoredAway: Double? = null,
+    val avgGoalsConcededAway: Double? = null,
     val avgCorners: Double? = null,
     val avgYellowCards: Double? = null,
     val avgTotalShots: Double? = null,
@@ -526,47 +530,105 @@ object BzzoiroApiClient {
         formCache[teamId]?.let { return@withContext it }
         var stats = TeamRealFormStats(teamId = teamId, teamName = teamName)
         try {
-            val conn = openConnection("/teams/$teamId/form/")
+            // Intentar primero con filtro de racha reciente (?limit=4)
+            var conn = openConnection("/teams/$teamId/form/?limit=4")
+            if (conn.responseCode != 200) {
+                conn.disconnect()
+                conn = openConnection("/teams/$teamId/form/")
+            }
             if (conn.responseCode == 200) {
                 val root = JSONObject(readResponse(conn))
                 val overall = root.optJSONObject("overall")
-                if (overall != null) {
-                    val mCount = overall.optInt("matches", 0)
-                    val gf = if (overall.has("goals_for") && !overall.isNull("goals_for")) overall.optDouble("goals_for") else null
-                    val ga = if (overall.has("goals_against") && !overall.isNull("goals_against")) overall.optDouble("goals_against") else null
-                    val fStr = overall.optString("form", "")
+                val homeObj = root.optJSONObject("home")
+                val awayObj = root.optJSONObject("away")
 
-                    val cornObj = overall.optJSONObject("corners")
-                    val cornVal = if (cornObj != null && cornObj.has("avg_for") && !cornObj.isNull("avg_for")) {
-                        cornObj.optDouble("avg_for").takeIf { !it.isNaN() && it > 0.0 }
-                    } else null
+                // Comprobar si hay lista de partidos recientes para calcular con racha de 3-4 partidos
+                val recentMatchesArr = root.optJSONArray("recent_matches")
+                    ?: root.optJSONArray("matches")
+                    ?: root.optJSONArray("results")
 
-                    val cardObj = overall.optJSONObject("cards")
-                    val cardVal = if (cardObj != null && cardObj.has("avg_yellow") && !cardObj.isNull("avg_yellow")) {
-                        cardObj.optDouble("avg_yellow").takeIf { !it.isNaN() && it > 0.0 }
-                    } else null
-
-                    val shotObj = overall.optJSONObject("shots")
-                    val totalShots = if (shotObj != null && shotObj.has("avg_total") && !shotObj.isNull("avg_total")) {
-                        shotObj.optDouble("avg_total").takeIf { !it.isNaN() && it > 0.0 }
-                    } else null
-                    val sotVal = if (shotObj != null && shotObj.has("avg_on_target") && !shotObj.isNull("avg_on_target")) {
-                        shotObj.optDouble("avg_on_target").takeIf { !it.isNaN() && it > 0.0 }
-                    } else null
-
-                    stats = TeamRealFormStats(
-                        teamId = teamId,
-                        teamName = teamName,
-                        matchesPlayed = mCount,
-                        avgGoalsScored = if (mCount > 0 && gf != null) gf / mCount.toDouble() else null,
-                        avgGoalsConceded = if (mCount > 0 && ga != null) ga / mCount.toDouble() else null,
-                        avgCorners = cornVal,
-                        avgYellowCards = cardVal,
-                        avgTotalShots = totalShots,
-                        avgShotsOnTarget = sotVal,
-                        formString = fStr
-                    )
+                var recentGfSum = 0.0
+                var recentGaSum = 0.0
+                var recentCount = 0
+                if (recentMatchesArr != null && recentMatchesArr.length() > 0) {
+                    val countToUse = minOf(recentMatchesArr.length(), 4)
+                    for (i in 0 until countToUse) {
+                        val mObj = recentMatchesArr.getJSONObject(i)
+                        if (mObj.has("goals_for") && !mObj.isNull("goals_for")) {
+                            recentGfSum += mObj.optDouble("goals_for", 0.0)
+                            recentGaSum += mObj.optDouble("goals_against", 0.0)
+                            recentCount++
+                        } else if (mObj.has("score")) {
+                            val scoreStr = mObj.optString("score", "")
+                            val parts = scoreStr.split("-")
+                            if (parts.size == 2) {
+                                val gf = parts[0].trim().toDoubleOrNull() ?: 0.0
+                                val ga = parts[1].trim().toDoubleOrNull() ?: 0.0
+                                recentGfSum += gf
+                                recentGaSum += ga
+                                recentCount++
+                            }
+                        }
+                    }
                 }
+
+                val mCount = overall?.optInt("matches", 0) ?: 0
+                val gf = if (overall != null && overall.has("goals_for") && !overall.isNull("goals_for")) overall.optDouble("goals_for") else null
+                val ga = if (overall != null && overall.has("goals_against") && !overall.isNull("goals_against")) overall.optDouble("goals_against") else null
+                val fStr = overall?.optString("form", "") ?: ""
+
+                // Promedio local jugando de local
+                val homeMatches = homeObj?.optInt("matches", 0) ?: 0
+                val homeGf = if (homeObj != null && homeObj.has("goals_for") && !homeObj.isNull("goals_for")) homeObj.optDouble("goals_for") else null
+                val homeGa = if (homeObj != null && homeObj.has("goals_against") && !homeObj.isNull("goals_against")) homeObj.optDouble("goals_against") else null
+                val avgGfHome = if (homeMatches > 0 && homeGf != null) homeGf / homeMatches.toDouble() else null
+                val avgGaHome = if (homeMatches > 0 && homeGa != null) homeGa / homeMatches.toDouble() else null
+
+                // Promedio visitante jugando de visitante
+                val awayMatches = awayObj?.optInt("matches", 0) ?: 0
+                val awayGf = if (awayObj != null && awayObj.has("goals_for") && !awayObj.isNull("goals_for")) awayObj.optDouble("goals_for") else null
+                val awayGa = if (awayObj != null && awayObj.has("goals_against") && !awayObj.isNull("goals_against")) awayObj.optDouble("goals_against") else null
+                val avgGfAway = if (awayMatches > 0 && awayGf != null) awayGf / awayMatches.toDouble() else null
+                val avgGaAway = if (awayMatches > 0 && awayGa != null) awayGa / awayMatches.toDouble() else null
+
+                val cornObj = overall?.optJSONObject("corners")
+                val cornVal = if (cornObj != null && cornObj.has("avg_for") && !cornObj.isNull("avg_for")) {
+                    cornObj.optDouble("avg_for").takeIf { !it.isNaN() && it > 0.0 }
+                } else null
+
+                val cardObj = overall?.optJSONObject("cards")
+                val cardVal = if (cardObj != null && cardObj.has("avg_yellow") && !cardObj.isNull("avg_yellow")) {
+                    cardObj.optDouble("avg_yellow").takeIf { !it.isNaN() && it > 0.0 }
+                } else null
+
+                val shotObj = overall?.optJSONObject("shots")
+                val totalShots = if (shotObj != null && shotObj.has("avg_total") && !shotObj.isNull("avg_total")) {
+                    shotObj.optDouble("avg_total").takeIf { !it.isNaN() && it > 0.0 }
+                } else null
+                val sotVal = if (shotObj != null && shotObj.has("avg_on_target") && !shotObj.isNull("avg_on_target")) {
+                    shotObj.optDouble("avg_on_target").takeIf { !it.isNaN() && it > 0.0 }
+                } else null
+
+                // Priorizar racha reciente (3 o 4 partidos)
+                val finalAvgGf = if (recentCount >= 3) recentGfSum / recentCount.toDouble() else if (mCount > 0 && gf != null) gf / mCount.toDouble() else null
+                val finalAvgGa = if (recentCount >= 3) recentGaSum / recentCount.toDouble() else if (mCount > 0 && ga != null) ga / mCount.toDouble() else null
+
+                stats = TeamRealFormStats(
+                    teamId = teamId,
+                    teamName = teamName,
+                    matchesPlayed = if (recentCount >= 3) recentCount else mCount,
+                    avgGoalsScored = finalAvgGf,
+                    avgGoalsConceded = finalAvgGa,
+                    avgGoalsScoredHome = avgGfHome,
+                    avgGoalsConcededHome = avgGaHome,
+                    avgGoalsScoredAway = avgGfAway,
+                    avgGoalsConcededAway = avgGaAway,
+                    avgCorners = cornVal,
+                    avgYellowCards = cardVal,
+                    avgTotalShots = totalShots,
+                    avgShotsOnTarget = sotVal,
+                    formString = fStr
+                )
             }
             conn.disconnect()
         } catch (_: Exception) {}
@@ -1070,14 +1132,30 @@ object QuantumMathEngine {
         homeSquad: List<Pair<String, String>>, awaySquad: List<Pair<String, String>>,
         confirmedLineups: Set<String> = emptySet()
     ): QuantumMatchAnalysis {
-        val leagueAvg = 1.35
-        val homeAttack = ((homeStats.avgGoalsScored ?: 1.35) / leagueAvg).coerceIn(0.60, 2.50)
-        val awayDefense = ((awayStats.avgGoalsConceded ?: 1.20) / leagueAvg).coerceIn(0.60, 2.40)
-        val awayAttack = ((awayStats.avgGoalsScored ?: 1.25) / leagueAvg).coerceIn(0.60, 2.50)
-        val homeDefense = ((homeStats.avgGoalsConceded ?: 1.20) / leagueAvg).coerceIn(0.60, 2.40)
+        // CÁLCULO ESTRICTO DE LOCAL Y VISITANTE (BZZOIRO HOME/AWAY)
+        val homeGfHome = homeStats.avgGoalsScoredHome
+        val awayGaAway = awayStats.avgGoalsConcededAway
+        val awayGfAway = awayStats.avgGoalsScoredAway
+        val homeGaHome = homeStats.avgGoalsConcededHome
 
-        val lambdaHome = (homeAttack * awayDefense * 1.45).coerceIn(0.40, 3.50)
-        val lambdaAway = (awayAttack * homeDefense * 1.10).coerceIn(0.30, 3.00)
+        val lambdaHome = if (homeGfHome != null && awayGaAway != null) {
+            ((homeGfHome + awayGaAway) / 2.0).coerceIn(0.30, 3.80)
+        } else {
+            val hGf = homeStats.avgGoalsScored ?: 1.35
+            val aGa = awayStats.avgGoalsConceded ?: 1.20
+            ((hGf + aGa) / 2.0).coerceIn(0.30, 3.80)
+        }
+
+        val lambdaAway = if (awayGfAway != null && homeGaHome != null) {
+            ((awayGfAway + homeGaHome) / 2.0).coerceIn(0.20, 3.50)
+        } else {
+            // Penalización del 10% (x 0.9) por condición de visitante si no hay datos separados
+            val aGf = awayStats.avgGoalsScored ?: 1.20
+            val hGa = homeStats.avgGoalsConceded ?: 1.25
+            val baseAway = (aGf + hGa) / 2.0
+            (baseAway * 0.90).coerceIn(0.20, 3.50)
+        }
+
         val lambdaTotal = lambdaHome + lambdaAway
 
         var pHome = 0.0; var pDraw = 0.0; var pAway = 0.0
@@ -1820,10 +1898,17 @@ fun MatchBetBuilderCardView(analysis: QuantumMatchAnalysis) {
             )
         }
     } else {
+        val isHighRisk = analysis.jointProbability < 0.40 || parlay.size > 3
+        val probColor = when {
+            analysis.jointProbability < 0.40 -> Color(0xFFEF4444)
+            isHighRisk -> Color(0xFFF97316)
+            else -> Color(0xFF10B981)
+        }
+
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = Color(0xFF141E33),
-            border = BorderStroke(1.dp, Color(0xFF1E293B)),
+            border = BorderStroke(1.dp, if (isHighRisk) Color(0xFFEF4444) else Color(0xFF1E293B)),
             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
         ) {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1839,14 +1924,45 @@ fun MatchBetBuilderCardView(analysis: QuantumMatchAnalysis) {
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
-                    Surface(shape = RoundedCornerShape(6.dp), color = Color(0xFF0A0F1D)) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (isHighRisk) Color(0x33EF4444) else Color(0xFF0A0F1D)
+                    ) {
                         Text(
                             text = "${parlay.size} SELECCIONES",
-                            color = Color(0xFF38BDF8),
+                            color = if (isHighRisk) Color(0xFFFCA5A5) else Color(0xFF38BDF8),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Black,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
+                    }
+                }
+
+                if (isHighRisk) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0x26EF4444),
+                        border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Alerta de riesgo",
+                                tint = Color(0xFFEF4444),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "ALTO RIESGO: Probabilidad baja. Se recomienda jugar apuestas simples o de 2 patas",
+                                color = Color(0xFFFCA5A5),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 
@@ -1896,7 +2012,7 @@ fun MatchBetBuilderCardView(analysis: QuantumMatchAnalysis) {
                         Text("PROBABILIDAD CONJUNTA", color = Color(0xFF94A3B8), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Text(
                             "${(analysis.jointProbability * 100).toInt()}%",
-                            color = Color(0xFF00E5FF),
+                            color = probColor,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Black
                         )
